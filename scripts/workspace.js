@@ -1,6 +1,6 @@
 const GRAPH_WIDTH = 1000;
 const GRAPH_HEIGHT = 660;
-const FRONTEND_VERSION = "0.5.1";
+const FRONTEND_VERSION = "0.5.2";
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -667,8 +667,15 @@ export function initCharacterWorkspace(deps) {
         <div><strong>${result.stats.profileCount}</strong><span>画像</span></div>
         <div><strong>${result.stats.milestoneCount}</strong><span>成长</span></div>
         <div><strong>${result.stats.relationCount}</strong><span>关系</span></div>
-        <div><strong>${result.stats.characterCount}</strong><span>字符</span></div>
+        <div><strong>${result.stats.estimatedTokens}</strong><span>估算 tokens</span></div>
       </div>
+      <div class="ccm-recall-detected"><b>注意力预算</b><span>${
+        result.stats.baseContextTokens == null ? "基础上下文未知" :
+          `基础 ${result.stats.baseContextTokens} + 召回 ${result.stats.estimatedTokens}` +
+          ` ≈ ${result.stats.projectedInputTokens} tokens`
+      } · 上限 ${result.stats.attentionCeilingTokens} · ${
+        result.stats.contextSizeExact ? "生成时精确基数" : "预览估算基数"
+      }</span></div>
       <div class="ccm-recall-detected"><b>识别人物</b><span>${escapeHtml(result.detectedCharacters.join("、") || "本轮没有识别到人物")}</span></div>
       <pre class="ccm-injection-preview">${escapeHtml(result.injection || "本轮没有可注入的人物资料。")}</pre>`
       : `<div class="ccm-empty"><i class="fa-solid fa-wand-magic-sparkles"></i><h3>还没有召回记录</h3>
@@ -686,7 +693,12 @@ export function initCharacterWorkspace(deps) {
           <input id="ccm-ws-enabled" type="checkbox" ${current.enabled ? "checked" : ""}></label>
         <div class="ccm-settings-grid">
           <label>读取最近消息数<input id="ccm-ws-recent" type="number" min="1" max="30" value="${Number(current.recentMessages)}"></label>
-          <label>最大注入字符<input id="ccm-ws-chars" type="number" min="500" max="20000" value="${Number(current.maxChars)}"></label>
+          <label>总输入注意力上限（tokens）<input id="ccm-ws-attention" type="number" min="8000" max="1000000"
+            value="${Number(current.attentionCeilingTokens)}"></label>
+          <label>人物召回最高预算（tokens）<input id="ccm-ws-recall-tokens" type="number" min="500" max="20000"
+            value="${Number(current.recallMaxTokens)}"></label>
+          <label>输出与扩展安全余量（tokens）<input id="ccm-ws-reserve" type="number" min="1000" max="40000"
+            value="${Number(current.safetyReserveTokens)}"></label>
           <label>画像上限<input id="ccm-ws-profiles" type="number" min="1" max="8" value="${Number(current.profileLimit)}"></label>
           <label>成长上限<input id="ccm-ws-milestones" type="number" min="0" max="20" value="${Number(current.milestoneLimit)}"></label>
           <label>关系上限<input id="ccm-ws-relations" type="number" min="0" max="24" value="${Number(current.relationLimit)}"></label>
@@ -1366,7 +1378,9 @@ export function initCharacterWorkspace(deps) {
       const values = {
         enabled: document.querySelector("#ccm-ws-enabled").checked,
         recentMessages: Number(document.querySelector("#ccm-ws-recent").value),
-        maxChars: Number(document.querySelector("#ccm-ws-chars").value),
+        attentionCeilingTokens: Number(document.querySelector("#ccm-ws-attention").value),
+        recallMaxTokens: Number(document.querySelector("#ccm-ws-recall-tokens").value),
+        safetyReserveTokens: Number(document.querySelector("#ccm-ws-reserve").value),
         profileLimit: Number(document.querySelector("#ccm-ws-profiles").value),
         milestoneLimit: Number(document.querySelector("#ccm-ws-milestones").value),
         relationLimit: Number(document.querySelector("#ccm-ws-relations").value),

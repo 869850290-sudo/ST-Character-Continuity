@@ -266,7 +266,7 @@ async function init(router) {
       const state = await store.read();
       res.json({
         success: true,
-        version: "0.5.1",
+        version: "0.5.2",
         stateVersion: state.version,
         batches: Object.keys(state.batches).length,
       });
