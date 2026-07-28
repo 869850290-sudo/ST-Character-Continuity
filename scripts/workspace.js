@@ -151,6 +151,7 @@ export function initCharacterWorkspace(deps) {
     analysisJob: null,
     analysisPreview: null,
     analysisBusy: false,
+    analysisNotice: null,
     autoRetryAfter: 0,
   };
 
@@ -308,6 +309,10 @@ export function initCharacterWorkspace(deps) {
         <div><span>已处理至</span><b>${processed}</b></div>
         <div><span>已采纳批次</span><b>${Number(progress?.sequence ?? 0)}</b></div>
       </div>
+      <div id="ccm-analysis-notice" class="ccm-analysis-notice ${state.analysisNotice?.type || ""}"
+        role="status" aria-live="polite" ${state.analysisNotice ? "" : "hidden"}>
+        ${escapeHtml(state.analysisNotice?.message || "")}
+      </div>
       <section class="ccm-analysis-panel">
         <header><div><span>AUTOMATION</span><h3>自动人物更新</h3></div>
           <label class="ccm-switch"><input id="ccm-analysis-auto" type="checkbox"
@@ -317,7 +322,7 @@ export function initCharacterWorkspace(deps) {
         <div class="ccm-analysis-controls">
           <label>触发间隔（楼）<input id="ccm-analysis-interval" type="number" min="2" max="100"
             value="${Number(cfg().analysisInterval ?? 10)}"></label>
-          <button data-action="save-analysis-settings" class="ccm-primary">
+          <button type="button" data-action="save-analysis-settings" class="ccm-primary">
             <i class="fa-solid fa-floppy-disk"></i> 保存自动设置
           </button>
         </div>
@@ -329,8 +334,8 @@ export function initCharacterWorkspace(deps) {
             max="${Math.max(0, snapshot.latestFloor)}" value="${suggestedStart}"></label>
           <label>终点楼层<input id="ccm-analysis-end" type="number" min="0"
             max="${Math.max(0, snapshot.latestFloor)}" value="${snapshot.latestFloor}"></label>
-          <button data-action="preview-range"><i class="fa-solid fa-eye"></i> 预览范围</button>
-          <button data-action="run-analysis" class="ccm-primary" ${running ? "disabled" : ""}>
+          <button type="button" data-action="preview-range"><i class="fa-solid fa-eye"></i> 预览范围</button>
+          <button type="button" data-action="run-analysis" class="ccm-primary" ${running ? "disabled" : ""}>
             <i class="fa-solid ${running ? "fa-circle-notch fa-spin" : "fa-play"}"></i>
             ${running ? "模型正在分析…" : "执行人物分析"}
           </button>
@@ -367,10 +372,10 @@ export function initCharacterWorkspace(deps) {
           内部清洗已固定启用：开场白和用户消息保留原文；角色回复自动提取 &lt;content&gt;，
           剥离 thinking / analysis、HTML、CSS、注释和状态栏标记。这里不执行来源不明的自定义正则。</p>
         <div class="ccm-settings-actions">
-          <button data-action="save-analysis-config" class="ccm-primary">
+          <button type="button" data-action="save-analysis-config" class="ccm-primary">
             <i class="fa-solid fa-floppy-disk"></i> 保存模型与提示词
           </button>
-          <button data-action="export-analysis-prompt"><i class="fa-solid fa-file-export"></i> 导出提示词</button>
+          <button type="button" data-action="export-analysis-prompt"><i class="fa-solid fa-file-export"></i> 导出提示词</button>
         </div>
       </section>
       <section class="ccm-analysis-panel">
@@ -802,6 +807,9 @@ export function initCharacterWorkspace(deps) {
 
   function rangeValues() {
     const snapshot = deps.getChatSnapshot();
+    if (snapshot.latestFloor < 0 || !snapshot.messages.length) {
+      throw new Error("当前没有可分析的聊天楼层，请先打开一份聊天记录。");
+    }
     const start = Math.max(0, Number(document.querySelector("#ccm-analysis-start")?.value ?? 0));
     const end = Math.min(
       snapshot.latestFloor,
@@ -809,6 +817,16 @@ export function initCharacterWorkspace(deps) {
     );
     if (end < start) throw new Error("终点楼层不能小于起始楼层。");
     return { snapshot, start, end };
+  }
+
+  function showAnalysisNotice(type, message) {
+    state.analysisNotice = { type, message: String(message || "") };
+    const notice = view.querySelector("#ccm-analysis-notice");
+    if (!notice) return;
+    notice.className = `ccm-analysis-notice ${type}`;
+    notice.textContent = state.analysisNotice.message;
+    notice.hidden = false;
+    notice.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }
 
   function previewRange() {
@@ -946,7 +964,7 @@ export function initCharacterWorkspace(deps) {
       try {
         previewRange();
       } catch (error) {
-        deps.notify("error", error.message);
+        showAnalysisNotice("error", `无法预览：${error.message}`);
       }
       return;
     }
@@ -955,7 +973,7 @@ export function initCharacterWorkspace(deps) {
         const { start, end } = rangeValues();
         await runAnalysisRange({ start, end });
       } catch (error) {
-        deps.notify("error", error.message);
+        showAnalysisNotice("error", `人物分析失败：${error.message}`);
       }
       return;
     }
@@ -982,16 +1000,20 @@ export function initCharacterWorkspace(deps) {
         Math.min(100, Number(document.querySelector("#ccm-analysis-interval").value || 10)),
       );
       deps.saveSettings();
-      deps.notify(
-        "success",
-        cfg().analysisAutoEnabled
+      const message = cfg().analysisAutoEnabled
           ? `自动人物更新已开启：每 ${cfg().analysisInterval} 楼执行一次。`
-          : "自动人物更新保持关闭；手动分析仍可使用。",
-      );
+          : "自动人物更新保持关闭；手动分析仍可使用。";
+      state.analysisNotice = { type: "success", message };
       renderAnalysis();
+      deps.notify("success", message);
       return;
     }
     if (action === "save-analysis-config") {
+      if (button.dataset.busy === "true") return;
+      const originalHtml = button.innerHTML;
+      button.dataset.busy = "true";
+      button.disabled = true;
+      button.innerHTML = `<i class="fa-solid fa-circle-notch fa-spin"></i> 正在保存…`;
       try {
         const response = await deps.callBackend("/analysis/config/save", { config: {
           provider: document.querySelector("#ccm-analysis-provider").value,
@@ -1003,10 +1025,17 @@ export function initCharacterWorkspace(deps) {
           prompt: document.querySelector("#ccm-analysis-prompt").value,
         } });
         state.analysisConfig = response.config;
-        deps.notify("success", "人物分析模型与提示词已保存。");
+        state.analysisNotice = { type: "success", message: "模型、API 配置和人物分析提示词已保存。" };
         renderAnalysis();
+        deps.notify("success", state.analysisNotice.message);
       } catch (error) {
-        deps.notify("error", error.message);
+        showAnalysisNotice("error", `保存失败：${error.message}`);
+      } finally {
+        if (button.isConnected) {
+          button.dataset.busy = "false";
+          button.disabled = false;
+          button.innerHTML = originalHtml;
+        }
       }
       return;
     }
