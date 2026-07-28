@@ -18,6 +18,28 @@
   margin-bottom: 18px;
 }
 
+.ccm-analysis-notice {
+  margin: -4px 0 18px;
+  padding: 12px 14px;
+  border: 1px solid var(--ccm-border);
+  border-radius: 12px;
+  background: rgb(20 30 45 / 92%);
+  color: var(--ccm-text);
+  font-weight: 700;
+}
+
+.ccm-analysis-notice.success {
+  border-color: rgb(36 198 154 / 55%);
+  background: rgb(18 83 69 / 48%);
+  color: #b9f8e4;
+}
+
+.ccm-analysis-notice.error {
+  border-color: rgb(242 108 120 / 62%);
+  background: rgb(104 32 43 / 52%);
+  color: #ffd2d7;
+}
+
 .ccm-analysis-progress > div,
 .ccm-analysis-panel {
   border: 1px solid var(--ccm-border);
@@ -444,14 +466,21 @@ body.ccm-workspace-open {
   overflow: hidden !important;
 }
 
-body.ccm-workspace-open > :not(#ccm-overlay) {
+body.ccm-workspace-open > :not(#ccm-overlay):not(#toast-container) {
   visibility: hidden !important;
   pointer-events: none !important;
 }
 
 body.ccm-workspace-open > #ccm-overlay,
-body.ccm-workspace-open > #ccm-overlay * {
+body.ccm-workspace-open > #ccm-overlay *,
+body.ccm-workspace-open > #toast-container,
+body.ccm-workspace-open > #toast-container * {
   visibility: visible !important;
+}
+
+body.ccm-workspace-open > #toast-container {
+  pointer-events: auto !important;
+  z-index: 10080 !important;
 }
 
 .ccm-header {
