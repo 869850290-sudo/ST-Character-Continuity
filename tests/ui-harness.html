@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>人物连续性工作台预览</title>
+  <link rel="stylesheet" href="../style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css">
+</head>
+<body style="margin:0;background:#090d14">
+  <script type="module">
+    import { initCharacterWorkspace } from "../scripts/workspace.js";
+
+    const profile = (character, stage, version = 2) => ({
+      story_id: "你是恶役",
+      timeline_id: "主线",
+      character,
+      current_profile: {
+        personality: "冷静克制，习惯观察局势后行动，同时保留明确的个人边界。",
+        behavior_pattern: "优先控制风险，在关键时刻通过具体行动表达立场。",
+        core_need: "确认自己的选择被看见，并维持对局势的主动权。",
+        current_stage: stage,
+      },
+      growth_synopsis: `${character}从依赖既有秩序逐渐转向主动判断。面对冲突时，他开始承担自己选择带来的后果，而不是等待别人替他决定。`,
+      residual_patterns: [{
+        trigger: "失去控制",
+        likely_response: "重新采取强硬手段",
+        counterweight: "来自Fi的明确确认",
+        evidence: [],
+      }],
+      active_milestone_ids: [],
+      version,
+      last_source: "测试聊天 · 61—80楼",
+    });
+
+    const profiles = Object.fromEntries([
+      ["傅远平", "正在学习把保护和控制分开"],
+      ["牧知傲", "从服从工具转向有主体性的同伴"],
+      ["邱顺", "正在反抗被操控的安排"],
+      ["白京墨", "稳定执行Fi的计划"],
+      ["云礼", "维持克制但开始主动介入"],
+    ].map(([name, stage]) => [`你是恶役::主线::${name}`, profile(name, stage)]));
+
+    const relation = (from, to, type, attitude) => ({
+      story_id: "你是恶役",
+      timeline_id: "主线",
+      from, to,
+      primary_type: type,
+      tags: [],
+      attitude,
+      interaction_pattern: "通过直接行动确认彼此的位置与边界。",
+      visibility: "private",
+      strength: 0.75,
+      active: true,
+      version: 2,
+    });
+    const relations = Object.fromEntries([
+      ["fi-fu", relation("Fi", "傅远平", "未婚伴侣", "信任中仍保留试探")],
+      ["fu-fi", relation("傅远平", "Fi", "未婚夫", "克制保护，但有控制倾向")],
+      ["fi-mu", relation("Fi", "牧知傲", "引导者", "把他当作正在成长的同伴")],
+      ["mu-fi", relation("牧知傲", "Fi", "追随者", "忠诚、依赖并渴望认可")],
+      ["yun-qiu", relation("云礼", "邱顺", "导师与学生", "保持耐心与明确边界")],
+      ["bai-fi", relation("白京墨", "Fi", "核心助手", "稳定执行并主动补位")],
+    ]);
+
+    const workspace = {
+      storyId: "你是恶役",
+      timelineId: "主线",
+      profiles,
+      milestones: [{
+        character: "牧知傲",
+        title: "第一次主动保留证据",
+        time: "2025/05/11 16:52",
+        location: "兰芝高中西楼二层小会客室",
+        narrative: "牧知傲没有等待命令，而是自行保留证据并承担擅自行动的责任。",
+        change_trace: "从无条件服从转向主动判断。",
+        stage: "emerging",
+        dimension: "autonomy",
+      }],
+      relations,
+      graphPositions: {},
+      counts: { batches: 2 },
+    };
+    const settings = {
+      enabled: true,
+      storyId: "你是恶役",
+      timelineId: "主线",
+      recentMessages: 8,
+      profileLimit: 4,
+      milestoneLimit: 6,
+      relationLimit: 8,
+      maxChars: 6000,
+    };
+
+    const lab = initCharacterWorkspace({
+      settings: () => settings,
+      saveSettings() {},
+      notify(type, message) { console.log(type, message); },
+      async callBackend(endpoint) {
+        if (endpoint === "/workspace") return { success: true, workspace };
+        if (endpoint === "/health") return { success: true, version: "0.2.0", batches: 2 };
+        if (endpoint === "/state/get") return { success: true, state: {} };
+        return { success: true };
+      },
+      async runRecall() {
+        return {
+          detectedCharacters: ["Fi", "傅远平"],
+          injection: "<character_continuity_memory>\\n人物资料预览\\n</character_continuity_memory>",
+          stats: { profileCount: 2, milestoneCount: 1, relationCount: 2, characterCount: 56 },
+        };
+      },
+      getLastRecall: () => null,
+    });
+    lab.open();
+  </script>
+</body>
+</html>

@@ -3,6 +3,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 const { recall } = require("../server/recall.cjs");
+const { materializeProfiles, materializeRelationships } = require("../server/state.cjs");
 
 function state() {
   return {
@@ -137,4 +138,60 @@ test("故事和时间线不匹配时不会误注入", () => {
     text: "傅远平与Fi",
   });
   assert.equal(result.injection, "");
+});
+
+test("人工画像覆盖模型结果，并可继续被召回", () => {
+  const memory = state();
+  memory.profileOverrides ??= {};
+  memory.profileOverrides["恶役::主线::牧知傲"] = {
+    story_id: "恶役",
+    timeline_id: "主线",
+    character: "牧知傲",
+    current_profile: {
+      personality: "人工修订后的性格",
+      behavior_pattern: "先观察再行动",
+      core_need: "确认自己被主动选择",
+      current_stage: "成为有主体性的同伴",
+    },
+    growth_synopsis: "人工修订后的成长历史。",
+    residual_patterns: [],
+    active_milestone_ids: [],
+    active: true,
+    version: 9,
+    updated_at: "2026-07-28T00:00:00.000Z",
+    last_batch_id: "manual",
+    last_source: "人工编辑",
+  };
+
+  const profiles = materializeProfiles(memory, "恶役", "主线");
+  assert.equal(profiles["恶役::主线::牧知傲"].current_profile.personality, "人工修订后的性格");
+
+  const result = recall(memory, {
+    storyId: "恶役",
+    timelineId: "主线",
+    text: "牧知傲走进房间。",
+  });
+  assert.match(result.injection, /人工修订后的性格/);
+});
+
+test("停用的人工关系不会出现在图谱物化结果中", () => {
+  const memory = state();
+  memory.relationOverrides ??= {};
+  memory.relationOverrides["恶役::主线::傅远平→fi"] = {
+    story_id: "恶役",
+    timeline_id: "主线",
+    from: "傅远平",
+    to: "Fi",
+    primary_type: "旧关系",
+    tags: [],
+    attitude: "",
+    interaction_pattern: "",
+    visibility: "private",
+    strength: 0.5,
+    active: false,
+    version: 2,
+  };
+
+  const relations = materializeRelationships(memory, "恶役", "主线");
+  assert.equal(relations["恶役::主线::傅远平→fi"], undefined);
 });

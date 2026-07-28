@@ -1,6 +1,6 @@
 {
   "name": "st-character-continuity",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Character profiles, growth milestones and relationship recall for SillyTavern.",
   "main": "server/index.cjs",
   "scripts": {
@@ -15,4 +15,3 @@
   ],
   "license": "AGPL-3.0-only"
 }
-
