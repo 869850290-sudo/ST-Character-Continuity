@@ -260,4 +260,4 @@ setInterval(() => {
   if (settings().analysisAutoEnabled) workspace?.autoCheck();
 }, 15_000);
 
-console.log("[Character Continuity] 前端扩展 v0.4.0 已加载");
+console.log("[Character Continuity] 前端扩展 v0.4.1 已加载");
