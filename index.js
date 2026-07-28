@@ -217,4 +217,4 @@ ctx.eventSource?.on(readyEvent, initializeUi);
 if (document.readyState !== "loading") setTimeout(initializeUi, 0);
 else document.addEventListener("DOMContentLoaded", initializeUi, { once: true });
 
-console.log("[Character Continuity] 前端扩展 v0.2.0 已加载");
+console.log("[Character Continuity] 前端扩展 v0.2.1 已加载");
