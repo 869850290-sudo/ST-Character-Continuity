@@ -1,8 +1,8 @@
-import { initCharacterWorkspace } from "./scripts/workspace.js?v=0.4.4";
+import { initCharacterWorkspace } from "./scripts/workspace.js?v=0.4.5";
 
 const MODULE_NAME = "character_continuity";
 const API_ROOT = "/api/plugins/character-continuity";
-const FRONTEND_VERSION = "0.4.4";
+const FRONTEND_VERSION = "0.4.5";
 
 const DEFAULT_SETTINGS = Object.freeze({
   enabled: false,
@@ -62,6 +62,21 @@ function callBackend(endpoint, payload = {}, options = {}) {
   });
 }
 
+function messageFlag(value) {
+  if (typeof value === "string") {
+    return ["true", "1", "yes"].includes(value.trim().toLowerCase());
+  }
+  return value === true || value === 1;
+}
+
+function messageText(message) {
+  return String(message?.mes ?? message?.content ?? message?.text ?? "");
+}
+
+function isContinuityInjection(message) {
+  return message?.extra?.type === "character_continuity_injection";
+}
+
 function currentChatSnapshot() {
   const ctx = context();
   const current = ctx.characters?.[ctx.characterId];
@@ -89,12 +104,13 @@ function currentChatSnapshot() {
     latestFloor: Math.max(-1, (ctx.chat?.length ?? 0) - 1),
     messages: (ctx.chat ?? []).map((message, floor) => ({
       floor,
-      is_user: Boolean(message?.is_user),
-      is_system: Boolean(message?.is_system),
+      is_user: messageFlag(message?.is_user),
+      is_system: messageFlag(message?.is_system),
       name: String(message?.name ?? ""),
       send_date: String(message?.send_date ?? ""),
-      mes: String(message?.mes ?? ""),
-    })).filter((message) => !message.is_system && message.mes),
+      mes: messageText(message),
+      is_continuity_injection: isContinuityInjection(message),
+    })).filter((message) => message.mes && !message.is_continuity_injection),
     priorityCharacters: candidateCharacters(),
   };
 }
@@ -102,9 +118,11 @@ function currentChatSnapshot() {
 function recentText(chat) {
   const count = Math.max(1, Number(settings().recentMessages || 8));
   return chat
-    .filter((message) => message && !message.is_system && message.mes)
+    .filter((message) =>
+      message && !messageFlag(message.is_system) && !isContinuityInjection(message) && messageText(message))
     .slice(-count)
-    .map((message) => `${message.is_user ? "USER" : message.name || "CHAR"}: ${message.mes}`)
+    .map((message) =>
+      `${messageFlag(message.is_user) ? "USER" : message.name || "CHAR"}: ${messageText(message)}`)
     .join("\n\n");
 }
 
