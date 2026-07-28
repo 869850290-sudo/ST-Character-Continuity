@@ -168,6 +168,47 @@ test("旧版故事与时间线状态会迁移为独立档案库", () => {
   assert.equal(profile.story_id, undefined);
 });
 
+test("人物登记册为无成长的重要角色建立基础档案，纯工具人不建档", () => {
+  const state = normalizeState({
+    version: 3,
+    libraries: { shared: library("shared", "共享人物库") },
+    batches: {
+      census: {
+        batchId: "census",
+        libraryId: "shared",
+        status: "committed",
+        order: 1,
+        acceptedAt: "2026-07-29T00:00:00Z",
+        fileName: "测试聊天",
+        range: "0-9",
+        result: {
+          character_registry: [{
+            character: "兰芝高中·秘书长",
+            aliases: ["秘书长"],
+            identity_status: "title_only",
+            retention_tier: "watchlist",
+            narrative_role: "antagonist",
+            reason: "当前反派，冲突尚未解决。",
+          }, {
+            character: "会场·服务员A",
+            aliases: ["服务员"],
+            identity_status: "ambiguous",
+            retention_tier: "ephemeral",
+            narrative_role: "extra",
+          }],
+          profile_updates: [],
+          relation_changes: [],
+        },
+      },
+    },
+  });
+  const profiles = Object.values(materializeProfiles(state, "shared"));
+  assert.equal(profiles.length, 1);
+  assert.equal(profiles[0].character, "兰芝高中·秘书长");
+  assert.equal(profiles[0].retention_tier, "watchlist");
+  assert.equal(profiles[0].current_profile.current_stage, "");
+});
+
 test("人物改名会同步画像、成长记录、关系和人工配置", () => {
   const state = normalizeState({
     version: 3,

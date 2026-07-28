@@ -524,6 +524,33 @@ body.ccm-workspace-open > #toast-container {
   letter-spacing: 0.03em;
 }
 
+.ccm-registry-preview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.ccm-registry-preview span {
+  border: 1px solid var(--ccm-border);
+  border-radius: 999px;
+  padding: 5px 9px;
+  font-size: 12px;
+  background: color-mix(in srgb, var(--ccm-panel) 88%, transparent);
+}
+
+.ccm-registry-preview .tier-core { border-color: #d8ad57; }
+.ccm-registry-preview .tier-recurring { border-color: #7f68d9; }
+.ccm-registry-preview .tier-watchlist { border-color: #d87557; }
+.ccm-registry-preview .tier-ephemeral { opacity: 0.62; }
+
+.ccm-profile-card header small {
+  display: block;
+  margin-top: 3px;
+  opacity: 0.68;
+  font-size: 11px;
+}
+
 .ccm-version {
   display: inline-flex;
   margin-left: 5px;
