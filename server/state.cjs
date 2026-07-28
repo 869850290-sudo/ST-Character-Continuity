@@ -471,10 +471,14 @@ function renameCharacter(
     && Boolean(profiles[nextKey])
     && options.mergeDuplicate === true
     && isLegacyRenameDuplicate(state, libraryId, nextName, previousKey, nextKey);
-  if (previousKey !== nextKey && profiles[nextKey] && !mergingLegacyDuplicate) {
+  const mergingExisting = previousKey !== nextKey
+    && Boolean(profiles[nextKey])
+    && options.mergeExisting === true;
+  const mergingProfiles = mergingLegacyDuplicate || mergingExisting;
+  if (previousKey !== nextKey && profiles[nextKey] && !mergingProfiles) {
     throw new Error(`人物“${nextName}”已经存在，请换一个名字。`);
   }
-  if (mergingLegacyDuplicate) delete state.profileOverrides[nextKey];
+  if (mergingProfiles) delete state.profileOverrides[nextKey];
 
   const milestoneIdMap = new Map();
   for (const batch of Object.values(state.batches)) {
@@ -511,7 +515,12 @@ function renameCharacter(
     const source = state[mapName];
     if (!Object.hasOwn(source, previousKey)) continue;
     if (previousKey !== nextKey && Object.hasOwn(source, nextKey)) {
-      if (mergingLegacyDuplicate && mapName === "graphPositions") {
+      if (mergingProfiles && mapName === "graphPositions") {
+        delete source[previousKey];
+        continue;
+      }
+      if (mergingExisting && mapName === "profileLocks") {
+        source[nextKey] = { ...source[nextKey], ...source[previousKey] };
         delete source[previousKey];
         continue;
       }
@@ -535,7 +544,18 @@ function renameCharacter(
       };
       const nextRelationKey = relationKey(libraryId, nextEdge.from, nextEdge.to);
       if (Object.hasOwn(renamed, nextRelationKey)) {
-        throw new Error(`改名后会产生重复关系：${nextEdge.from} → ${nextEdge.to}。`);
+        if (!mergingExisting) {
+          throw new Error(`改名后会产生重复关系：${nextEdge.from} → ${nextEdge.to}。`);
+        }
+        const current = renamed[nextRelationKey];
+        const currentTime = Date.parse(current.updated_at ?? "") || 0;
+        const nextTime = Date.parse(nextEdge.updated_at ?? "") || 0;
+        const preferred = nextTime >= currentTime ? nextEdge : current;
+        renamed[nextRelationKey] = {
+          ...preferred,
+          tags: [...new Set([...(current.tags ?? []), ...(nextEdge.tags ?? [])])],
+        };
+        continue;
       }
       renamed[nextRelationKey] = nextEdge;
     }

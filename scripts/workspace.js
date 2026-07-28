@@ -1,6 +1,6 @@
 const GRAPH_WIDTH = 1000;
 const GRAPH_HEIGHT = 660;
-const FRONTEND_VERSION = "0.5.0";
+const FRONTEND_VERSION = "0.5.1";
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -845,9 +845,9 @@ export function initCharacterWorkspace(deps) {
           const [trigger = "", likely_response = "", counterweight = ""] =
             line.split(/[|｜]/).map((item) => item.trim());
           return { trigger, likely_response, counterweight, evidence: [] };
-        });
+      });
       try {
-        await deps.callBackend("/profile/save", {
+        const savePayload = {
           previousCharacter: profile.character,
           profile: {
             ...profile,
@@ -865,10 +865,26 @@ export function initCharacterWorkspace(deps) {
             growth_synopsis: form.get("growth_synopsis"),
             residual_patterns: residuals,
           },
-        });
+        };
+        try {
+          await deps.callBackend("/profile/save", savePayload);
+        } catch (error) {
+          const canMerge = character !== profile.character
+            && String(error.message).includes("已经存在");
+          if (!canMerge || !window.confirm(
+            `“${character}”已经存在。要把“${profile.character}”的成长记录、关系和画像合并进去吗？`
+            + "\n\n合并前会自动备份；合并后保留一个人物。",
+          )) {
+            throw error;
+          }
+          await deps.callBackend("/profile/save", {
+            ...savePayload,
+            mergeExisting: true,
+          });
+        }
         deps.notify("success", character === profile.character
           ? `${character}的画像已保存。`
-          : `人物已从“${profile.character}”改名为“${character}”，相关成长与关系已同步。`);
+          : `人物已从“${profile.character}”合并或改名为“${character}”，相关成长与关系已同步。`);
         closeProfileModal();
         await loadWorkspace();
       } catch (error) {
@@ -1107,6 +1123,7 @@ export function initCharacterWorkspace(deps) {
         startFloor: start,
         endFloor: end,
         mode,
+        userCharacter: snapshot.userCharacter,
         priorityCharacters: snapshot.priorityCharacters,
         messages: snapshot.messages,
       });

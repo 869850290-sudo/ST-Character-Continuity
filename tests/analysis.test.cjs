@@ -8,6 +8,7 @@ const path = require("node:path");
 const test = require("node:test");
 const {
   buildUserContent,
+  canonicalCharacterName,
   normalizeRegistry,
   normalizeOpenAiUrl,
   normalizeResult,
@@ -15,7 +16,7 @@ const {
 } = require("../server/analysis.cjs");
 const { AnalysisConfigStore, publicConfig } = require("../server/analysis-config.cjs");
 const { __test: serverTest } = require("../server/index.cjs");
-const { cleanAssistantContent, cleanMessages } = require("../server/preprocess.cjs");
+const { cleanAssistantContent, cleanMessages, formatMessages } = require("../server/preprocess.cjs");
 const { normalizeState } = require("../server/state.cjs");
 
 test("内部清洗提取 content 并移除思考链、样式和状态栏", () => {
@@ -34,6 +35,61 @@ test("开场白与用户消息保留原文，普通角色回复执行固定清�
   assert.equal(messages[0].content, "<b>开场白</b>");
   assert.equal(messages[1].content, "<thinking>秘密</thinking><content>用户原样</content>");
   assert.equal(messages[2].content, "角色正文");
+  assert.match(formatMessages(messages), /\[用户:Fi]/);
+});
+
+test("用户身份占位词和第二人称描述强制归到酒馆用户名", () => {
+  assert.equal(canonicalCharacterName("USER", "Fi"), "Fi");
+  assert.equal(canonicalCharacterName("用户", "Fi"), "Fi");
+  assert.equal(canonicalCharacterName("你是恶役", "Fi"), "Fi");
+  assert.equal(canonicalCharacterName("牧知傲", "Fi"), "牧知傲");
+
+  const registry = normalizeRegistry(JSON.stringify({
+    characters: [{
+      character: "你是恶役",
+      retention_tier: "core",
+      narrative_role: "protagonist",
+    }],
+  }), ["Fi"], "Fi");
+  assert.equal(registry.characters.length, 1);
+  assert.equal(registry.characters[0].character, "Fi");
+  assert.ok(registry.characters[0].aliases.includes("你是恶役"));
+});
+
+test("模型输出中的错误用户名会在画像、里程碑和关系里统一纠正", () => {
+  const result = normalizeResult(JSON.stringify({
+    character_audit: [{ character: "你是恶役", decision: "update" }],
+    profile_updates: [{
+      character: "你是恶役",
+      decision: "update",
+      milestone_candidates: [{
+        character: "你是恶役",
+        title: "夺回主动权",
+        narrative: "她主动做出选择。",
+        change_trace: "被动 → 选择 → 主动",
+        related_characters: ["你", "牧知傲"],
+      }],
+      proposed_profile: {
+        current_profile: {},
+        growth_synopsis: "",
+        residual_patterns: [],
+      },
+    }],
+    relation_changes: [{
+      decision: "update",
+      from: "牧知傲",
+      to: "你是恶役",
+    }],
+  }), { start: 1, end: 9 }, "Fi");
+
+  assert.equal(result.character_audit[0].character, "Fi");
+  assert.equal(result.profile_updates[0].character, "Fi");
+  assert.equal(result.profile_updates[0].milestone_candidates[0].character, "Fi");
+  assert.deepEqual(
+    result.profile_updates[0].milestone_candidates[0].related_characters,
+    ["Fi", "牧知傲"],
+  );
+  assert.equal(result.relation_changes[0].to, "Fi");
 });
 
 test("模型结果被规范成画像、里程碑和有向关系结构", () => {
@@ -115,6 +171,7 @@ test("构造人物分析上下文时包含全部选中楼层与已有画像", ()
     libraryId: "library-main",
     libraryName: "恶役主线",
     chatTitle: "测试聊天",
+    userCharacter: "Fi",
     startFloor: 0,
     endFloor: 1,
     messages: [
@@ -124,6 +181,8 @@ test("构造人物分析上下文时包含全部选中楼层与已有画像", ()
   }, state);
   assert.match(built.userContent, /\[楼层 0]/);
   assert.match(built.userContent, /\[楼层 1]/);
+  assert.match(built.userContent, /\[用户:Fi]/);
+  assert.match(built.userContent, /"user_character": "Fi"/);
   assert.match(built.userContent, /牧知傲/);
 });
 

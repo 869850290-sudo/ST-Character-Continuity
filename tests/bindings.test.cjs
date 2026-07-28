@@ -395,4 +395,15 @@ test("同名目标有独立内容时不会被自动合并", () => {
     () => renameCharacter(state, "shared", "甲", "乙", { mergeDuplicate: true }),
     /已经存在/,
   );
+
+  const merged = renameCharacter(
+    state,
+    "shared",
+    "甲",
+    "乙",
+    { mergeDuplicate: true, mergeExisting: true },
+  );
+  const profiles = Object.values(materializeProfiles(merged, "shared"));
+  assert.equal(profiles.length, 1);
+  assert.equal(profiles[0].character, "乙");
 });

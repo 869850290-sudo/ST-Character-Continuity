@@ -28,7 +28,7 @@ function cleanAssistantContent(value) {
 }
 
 function cleanMessage(message, floor) {
-  const isUser = Boolean(message?.is_user);
+  const isUser = Boolean(message?.is_user) || message?.role === "user";
   const isOpening = floor === 0;
   const raw = String(message?.mes ?? message?.content ?? "");
   const content = isUser || isOpening ? normalizeWhitespace(raw) : cleanAssistantContent(raw);
@@ -50,10 +50,13 @@ function cleanMessages(messages, startFloor = 0, endFloor = Number.MAX_SAFE_INTE
 
 function formatMessages(messages) {
   return cleanMessages(messages)
-    .map((message) =>
-      `[楼层 ${message.floor}] [${message.role === "user" ? "用户" : message.name || "角色"}]` +
-      `${message.send_date ? ` [${message.send_date}]` : ""}\n${message.content}`,
-    )
+    .map((message) => {
+      const speaker = message.role === "user"
+        ? `用户${message.name ? `:${message.name}` : ""}`
+        : message.name || "角色";
+      return `[楼层 ${message.floor}] [${speaker}]` +
+        `${message.send_date ? ` [${message.send_date}]` : ""}\n${message.content}`;
+    })
     .join("\n\n");
 }
 

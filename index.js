@@ -1,8 +1,8 @@
-import { initCharacterWorkspace } from "./scripts/workspace.js?v=0.5.0";
+import { initCharacterWorkspace } from "./scripts/workspace.js?v=0.5.1";
 
 const MODULE_NAME = "character_continuity";
 const API_ROOT = "/api/plugins/character-continuity";
-const FRONTEND_VERSION = "0.5.0";
+const FRONTEND_VERSION = "0.5.1";
 
 const DEFAULT_SETTINGS = Object.freeze({
   enabled: false,
@@ -102,6 +102,11 @@ function currentChatSnapshot() {
     chatKey,
     chatTitle: String(chatId || current?.name || "当前聊天"),
     latestFloor: Math.max(-1, (ctx.chat?.length ?? 0) - 1),
+    userCharacter: String(
+      ctx.name1
+      || ctx.chat?.find((message) => messageFlag(message?.is_user) && message?.name)?.name
+      || "",
+    ),
     messages: (ctx.chat ?? []).map((message, floor) => ({
       floor,
       is_user: messageFlag(message?.is_user),

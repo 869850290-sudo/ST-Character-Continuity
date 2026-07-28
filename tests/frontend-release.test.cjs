@@ -6,14 +6,14 @@ const path = require("node:path");
 const root = path.resolve(__dirname, "..");
 const read = (file) => fs.readFileSync(path.join(root, file), "utf8");
 
-test("v0.5.0 frontend release is visibly versioned and cache-busted", () => {
+test("v0.5.1 frontend release is visibly versioned and cache-busted", () => {
   const manifest = JSON.parse(read("manifest.json"));
   const entry = read("index.js");
   const workspace = read("scripts/workspace.js");
 
-  assert.equal(manifest.version, "0.5.0");
+  assert.equal(manifest.version, "0.5.1");
   assert.equal(manifest.auto_update, true);
-  assert.match(entry, /workspace\.js\?v=0\.5\.0/);
+  assert.match(entry, /workspace\.js\?v=0\.5\.1/);
   assert.match(workspace, /ccm-version">v\$\{FRONTEND_VERSION\}/);
 });
 
@@ -47,8 +47,18 @@ test("profile and relation editors use native top-layer dialogs", () => {
   assert.match(workspace, /<dialog id="ccm-profile-dialog"/);
   assert.match(workspace, /name="character"/);
   assert.match(workspace, /previousCharacter: profile\.character/);
+  assert.match(workspace, /mergeExisting: true/);
+  assert.match(workspace, /已经存在。要把/);
   assert.match(workspace, /<dialog id="ccm-relation-dialog"/);
   assert.doesNotMatch(workspace, /<div class="ccm-modal-backdrop"/);
+});
+
+test("analysis sends the real SillyTavern user identity to the backend", () => {
+  const entry = read("index.js");
+  const workspace = read("scripts/workspace.js");
+
+  assert.match(entry, /userCharacter: String\(/);
+  assert.match(workspace, /userCharacter: snapshot\.userCharacter/);
 });
 
 test("analysis range persists and preview uses a native top-layer dialog", () => {

@@ -11,6 +11,8 @@ const DEFAULT_PROMPT = `# Role
 
 # 强制人物审计
 - 阅读 <text_to_analyze> 中的全部楼层，不得只处理最后一条消息。
+- <speaker_identities> 是不可违背的身份映射。[用户:姓名] 的发言全部属于该姓名；
+  USER、用户、玩家、你、主角及“你是……”等第二人称描述句不得另建为人物。
 - 所有具名人物，以及 <priority_characters> 中的每个姓名，都必须出现在 character_audit。
 - 对每人选择 update、no_update 或 review；不得因戏份少、没有发言或只在幕后行动而漏掉。
 - 只有正文中存在可引用证据才允许 update；拿不准时用 review。
