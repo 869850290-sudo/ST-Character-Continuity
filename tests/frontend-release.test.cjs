@@ -6,14 +6,14 @@ const path = require("node:path");
 const root = path.resolve(__dirname, "..");
 const read = (file) => fs.readFileSync(path.join(root, file), "utf8");
 
-test("v0.4.6 frontend release is visibly versioned and cache-busted", () => {
+test("v0.4.7 frontend release is visibly versioned and cache-busted", () => {
   const manifest = JSON.parse(read("manifest.json"));
   const entry = read("index.js");
   const workspace = read("scripts/workspace.js");
 
-  assert.equal(manifest.version, "0.4.6");
+  assert.equal(manifest.version, "0.4.7");
   assert.equal(manifest.auto_update, true);
-  assert.match(entry, /workspace\.js\?v=0\.4\.6/);
+  assert.match(entry, /workspace\.js\?v=0\.4\.7/);
   assert.match(workspace, /ccm-version">v\$\{FRONTEND_VERSION\}/);
 });
 
@@ -45,6 +45,8 @@ test("profile and relation editors use native top-layer dialogs", () => {
   const workspace = read("scripts/workspace.js");
 
   assert.match(workspace, /<dialog id="ccm-profile-dialog"/);
+  assert.match(workspace, /name="character"/);
+  assert.match(workspace, /previousCharacter: profile\.character/);
   assert.match(workspace, /<dialog id="ccm-relation-dialog"/);
   assert.doesNotMatch(workspace, /<div class="ccm-modal-backdrop"/);
 });

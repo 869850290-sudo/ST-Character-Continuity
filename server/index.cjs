@@ -15,6 +15,7 @@ const {
   materializeRelationships,
   profileKey,
   progressKey,
+  renameCharacter,
   relationKey,
   resolveLibrary,
 } = require("./state.cjs");
@@ -245,7 +246,7 @@ async function init(router) {
       const state = await store.read();
       res.json({
         success: true,
-        version: "0.4.1",
+        version: "0.4.7",
         stateVersion: state.version,
         batches: Object.keys(state.batches).length,
       });
@@ -446,16 +447,30 @@ async function init(router) {
 
   router.post("/profile/save", async (req, res) => {
     try {
-      const state = await store.read();
+      let state = await store.read();
       const profile = profileFromRequest(req.body?.profile);
       if (!state.libraries[profile.library_id]) throw new Error("人物画像对应的档案库不存在。");
+      const previousCharacter = text(req.body?.previousCharacter, 200) || profile.character;
+      if (previousCharacter !== profile.character) {
+        state = renameCharacter(
+          state,
+          profile.library_id,
+          previousCharacter,
+          profile.character,
+        );
+      }
       const key = profileKey(profile.library_id, profile.character);
       state.profileOverrides[key] = profile;
-      const saved = await store.replace(state, `profile-${profile.character}`);
+      const reason = previousCharacter === profile.character
+        ? `profile-${profile.character}`
+        : `profile-rename-${previousCharacter}-to-${profile.character}`;
+      const saved = await store.replace(state, reason);
       res.json({
         success: true,
         profile: materializeProfiles(saved, profile.library_id)[key],
-        message: `${profile.character}的画像已保存。`,
+        message: previousCharacter === profile.character
+          ? `${profile.character}的画像已保存。`
+          : `人物已从“${previousCharacter}”改名为“${profile.character}”。`,
       });
     } catch (error) {
       errorResponse(res, error);

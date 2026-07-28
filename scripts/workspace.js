@@ -1,6 +1,6 @@
 const GRAPH_WIDTH = 1000;
 const GRAPH_HEIGHT = 660;
-const FRONTEND_VERSION = "0.4.6";
+const FRONTEND_VERSION = "0.4.7";
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -782,6 +782,8 @@ export function initCharacterWorkspace(deps) {
           <button type="button" data-modal-close aria-label="关闭">×</button></header>
         <p class="ccm-modal-note">人工保存后，这份画像会成为当前版本；可随时“交还模型”恢复自动生成版本。</p>
         <div class="ccm-modal-grid">
+          <label class="wide">人物姓名<input name="character" maxlength="200"
+            value="${escapeHtml(profile.character)}" required></label>
           <label>性格<textarea name="personality">${escapeHtml(profile.current_profile?.personality)}</textarea></label>
           <label>行动方式<textarea name="behavior_pattern">${escapeHtml(profile.current_profile?.behavior_pattern)}</textarea></label>
           <label>核心需求<textarea name="core_need">${escapeHtml(profile.current_profile?.core_need)}</textarea></label>
@@ -810,6 +812,11 @@ export function initCharacterWorkspace(deps) {
     modalRoot.querySelector("#ccm-profile-form").addEventListener("submit", async (event) => {
       event.preventDefault();
       const form = new FormData(event.currentTarget);
+      const character = String(form.get("character") ?? "").trim();
+      if (!character) {
+        deps.notify("warning", "人物姓名不能为空。");
+        return;
+      }
       const residuals = String(form.get("residual_patterns") ?? "").split(/\r?\n/)
         .map((line) => line.trim()).filter(Boolean).map((line) => {
           const [trigger = "", likely_response = "", counterweight = ""] =
@@ -817,18 +824,24 @@ export function initCharacterWorkspace(deps) {
           return { trigger, likely_response, counterweight, evidence: [] };
         });
       try {
-        await deps.callBackend("/profile/save", { profile: {
-          ...profile,
-          current_profile: {
-            personality: form.get("personality"),
-            behavior_pattern: form.get("behavior_pattern"),
-            core_need: form.get("core_need"),
-            current_stage: form.get("current_stage"),
+        await deps.callBackend("/profile/save", {
+          previousCharacter: profile.character,
+          profile: {
+            ...profile,
+            character,
+            current_profile: {
+              personality: form.get("personality"),
+              behavior_pattern: form.get("behavior_pattern"),
+              core_need: form.get("core_need"),
+              current_stage: form.get("current_stage"),
+            },
+            growth_synopsis: form.get("growth_synopsis"),
+            residual_patterns: residuals,
           },
-          growth_synopsis: form.get("growth_synopsis"),
-          residual_patterns: residuals,
-        } });
-        deps.notify("success", `${profile.character}的画像已保存。`);
+        });
+        deps.notify("success", character === profile.character
+          ? `${character}的画像已保存。`
+          : `人物已从“${profile.character}”改名为“${character}”，相关成长与关系已同步。`);
         closeProfileModal();
         await loadWorkspace();
       } catch (error) {
