@@ -5,13 +5,24 @@ const test = require("node:test");
 const { recall } = require("../server/recall.cjs");
 const { materializeProfiles, materializeRelationships } = require("../server/state.cjs");
 
+const LIBRARY_ID = "library-main";
+
 function state() {
   return {
-    version: 2,
+    version: 3,
+    libraries: {
+      [LIBRARY_ID]: {
+        id: LIBRARY_ID,
+        name: "恶役主线",
+        description: "",
+        archived: false,
+      },
+    },
+    cardDefaults: {},
+    chatBindings: {},
     baseProfiles: {
-      "恶役::主线::傅远平": {
-        story_id: "恶役",
-        timeline_id: "主线",
+      [`${LIBRARY_ID}::傅远平`]: {
+        library_id: LIBRARY_ID,
         character: "傅远平",
         current_profile: {
           personality: "克制、冷静",
@@ -24,9 +35,8 @@ function state() {
         active_milestone_ids: [],
         version: 1,
       },
-      "恶役::主线::牧知傲": {
-        story_id: "恶役",
-        timeline_id: "主线",
+      [`${LIBRARY_ID}::牧知傲`]: {
+        library_id: LIBRARY_ID,
         character: "牧知傲",
         current_profile: {
           personality: "冲动、忠诚",
@@ -41,9 +51,8 @@ function state() {
       },
     },
     baseRelations: {
-      "恶役::主线::傅远平→fi": {
-        story_id: "恶役",
-        timeline_id: "主线",
+      [`${LIBRARY_ID}::傅远平→fi`]: {
+        library_id: LIBRARY_ID,
         from: "傅远平",
         to: "Fi",
         primary_type: "未婚夫",
@@ -55,9 +64,8 @@ function state() {
         active: true,
         version: 1,
       },
-      "恶役::主线::陈耀章→fi": {
-        story_id: "恶役",
-        timeline_id: "主线",
+      [`${LIBRARY_ID}::陈耀章→fi`]: {
+        library_id: LIBRARY_ID,
         from: "陈耀章",
         to: "Fi",
         primary_type: "试探者",
@@ -73,11 +81,11 @@ function state() {
     profileLocks: {},
     relationOverrides: {},
     graphPositions: {},
+    analysisProgress: {},
     batches: {
       a: {
         batchId: "a",
-        storyId: "恶役",
-        timelineId: "主线",
+        libraryId: LIBRARY_ID,
         order: 1,
         status: "committed",
         acceptedAt: "2026-07-28T00:00:00Z",
@@ -115,15 +123,11 @@ function state() {
 
 test("按名字取画像，并只带相关人物的一跳关系", () => {
   const result = recall(state(), {
-    storyId: "恶役",
-    timelineId: "主线",
+    libraryId: LIBRARY_ID,
     text: "傅远平问Fi明天是不是要去见牧知傲。",
     candidateCharacters: ["Fi"],
   });
-  assert.deepEqual(
-    new Set(result.detectedCharacters),
-    new Set(["傅远平", "牧知傲", "Fi"]),
-  );
+  assert.deepEqual(new Set(result.detectedCharacters), new Set(["傅远平", "牧知傲", "Fi"]));
   assert.equal(result.profiles.length, 2);
   assert.equal(result.milestones.length, 1);
   assert.equal(result.relations.length, 1);
@@ -131,21 +135,16 @@ test("按名字取画像，并只带相关人物的一跳关系", () => {
   assert.doesNotMatch(result.injection, /陈耀章 → Fi/);
 });
 
-test("故事和时间线不匹配时不会误注入", () => {
-  const result = recall(state(), {
-    storyId: "另一个故事",
-    timelineId: "主线",
-    text: "傅远平与Fi",
-  });
-  assert.equal(result.injection, "");
+test("档案库不匹配或未绑定时不会误注入", () => {
+  assert.equal(recall(state(), { libraryId: "another", text: "傅远平与Fi" }).injection, "");
+  assert.equal(recall(state(), { libraryId: "", text: "傅远平与Fi" }).injection, "");
 });
 
 test("人工画像覆盖模型结果，并可继续被召回", () => {
   const memory = state();
   memory.profileOverrides ??= {};
-  memory.profileOverrides["恶役::主线::牧知傲"] = {
-    story_id: "恶役",
-    timeline_id: "主线",
+  memory.profileOverrides[`${LIBRARY_ID}::牧知傲`] = {
+    library_id: LIBRARY_ID,
     character: "牧知傲",
     current_profile: {
       personality: "人工修订后的性格",
@@ -162,36 +161,23 @@ test("人工画像覆盖模型结果，并可继续被召回", () => {
     last_batch_id: "manual",
     last_source: "人工编辑",
   };
-
-  const profiles = materializeProfiles(memory, "恶役", "主线");
-  assert.equal(profiles["恶役::主线::牧知傲"].current_profile.personality, "人工修订后的性格");
-
-  const result = recall(memory, {
-    storyId: "恶役",
-    timelineId: "主线",
+  const profiles = materializeProfiles(memory, LIBRARY_ID);
+  assert.equal(profiles[`${LIBRARY_ID}::牧知傲`].current_profile.personality, "人工修订后的性格");
+  assert.match(recall(memory, {
+    libraryId: LIBRARY_ID,
     text: "牧知傲走进房间。",
-  });
-  assert.match(result.injection, /人工修订后的性格/);
+  }).injection, /人工修订后的性格/);
 });
 
 test("停用的人工关系不会出现在图谱物化结果中", () => {
   const memory = state();
-  memory.relationOverrides ??= {};
-  memory.relationOverrides["恶役::主线::傅远平→fi"] = {
-    story_id: "恶役",
-    timeline_id: "主线",
+  memory.relationOverrides[`${LIBRARY_ID}::傅远平→fi`] = {
+    library_id: LIBRARY_ID,
     from: "傅远平",
     to: "Fi",
     primary_type: "旧关系",
-    tags: [],
-    attitude: "",
-    interaction_pattern: "",
-    visibility: "private",
-    strength: 0.5,
     active: false,
-    version: 2,
   };
-
-  const relations = materializeRelationships(memory, "恶役", "主线");
-  assert.equal(relations["恶役::主线::傅远平→fi"], undefined);
+  const relations = materializeRelationships(memory, LIBRARY_ID);
+  assert.equal(relations[`${LIBRARY_ID}::傅远平→fi`], undefined);
 });

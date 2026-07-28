@@ -5,8 +5,6 @@ const API_ROOT = "/api/plugins/character-continuity";
 
 const DEFAULT_SETTINGS = Object.freeze({
   enabled: false,
-  storyId: "默认故事",
-  timelineId: "主线",
   recentMessages: 8,
   profileLimit: 4,
   milestoneLimit: 6,
@@ -76,7 +74,15 @@ function currentChatSnapshot() {
     ctx.chatMetadata?.create_date ||
     `${current?.name || ctx.characterId || "chat"}:${firstDate}`,
   );
+  const cardKey = ctx.groupId != null
+    ? `group:${ctx.groupId}`
+    : current?.avatar
+      ? `character:${current.avatar}`
+      : `character:${ctx.characterId ?? "unknown"}:${current?.name ?? "unknown"}`;
   return {
+    cardKey,
+    cardName: String(ctx.groupId != null ? ctx.groups?.find?.((group) =>
+      group?.id === ctx.groupId)?.name || "当前群聊" : current?.name || "当前角色卡"),
     chatKey,
     chatTitle: String(chatId || current?.name || "当前聊天"),
     latestFloor: Math.max(-1, (ctx.chat?.length ?? 0) - 1),
@@ -112,9 +118,10 @@ function candidateCharacters() {
 
 async function runRecall(chat = context().chat) {
   const cfg = settings();
+  const snapshot = currentChatSnapshot();
   const response = await callBackend("/recall", {
-    storyId: cfg.storyId,
-    timelineId: cfg.timelineId,
+    cardKey: snapshot.cardKey,
+    chatKey: snapshot.chatKey,
     text: recentText(chat),
     candidateCharacters: candidateCharacters(),
     profileLimit: cfg.profileLimit,
@@ -253,4 +260,4 @@ setInterval(() => {
   if (settings().analysisAutoEnabled) workspace?.autoCheck();
 }, 15_000);
 
-console.log("[Character Continuity] 前端扩展 v0.3.1 已加载");
+console.log("[Character Continuity] 前端扩展 v0.4.0 已加载");

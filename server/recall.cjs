@@ -116,8 +116,7 @@ function cutSections(sections, maxChars) {
 }
 
 function recall(state, options = {}) {
-  const storyId = cleanText(options.storyId);
-  const timelineId = cleanText(options.timelineId);
+  const libraryId = cleanText(options.libraryId);
   const text = cleanText(options.text);
   const limits = {
     profiles: Math.max(1, Math.min(8, Number(options.profileLimit ?? 4))),
@@ -126,9 +125,9 @@ function recall(state, options = {}) {
     maxChars: Math.max(500, Math.min(20000, Number(options.maxChars ?? 6000))),
   };
 
-  const profileMap = materializeProfiles(state, storyId, timelineId);
-  const relationMap = materializeRelationships(state, storyId, timelineId);
-  const milestones = allMilestones(state, storyId, timelineId);
+  const profileMap = materializeProfiles(state, libraryId);
+  const relationMap = materializeRelationships(state, libraryId);
+  const milestones = allMilestones(state, libraryId);
   const names = uniqueNames(profileMap, relationMap);
   const detected = relevantCharacters({
     text,
@@ -214,8 +213,7 @@ function recall(state, options = {}) {
     : "";
 
   return {
-    storyId,
-    timelineId,
+    libraryId,
     detectedCharacters: detected,
     profiles,
     milestones: growth,
