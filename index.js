@@ -1,7 +1,8 @@
-import { initCharacterWorkspace } from "./scripts/workspace.js";
+import { initCharacterWorkspace } from "./scripts/workspace.js?v=0.4.2";
 
 const MODULE_NAME = "character_continuity";
 const API_ROOT = "/api/plugins/character-continuity";
+const FRONTEND_VERSION = "0.4.2";
 
 const DEFAULT_SETTINGS = Object.freeze({
   enabled: false,
@@ -260,4 +261,4 @@ setInterval(() => {
   if (settings().analysisAutoEnabled) workspace?.autoCheck();
 }, 15_000);
 
-console.log("[Character Continuity] 前端扩展 v0.4.1 已加载");
+console.log(`[Character Continuity] 前端扩展 v${FRONTEND_VERSION} 已加载`);

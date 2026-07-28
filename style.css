@@ -524,6 +524,18 @@ body.ccm-workspace-open > #toast-container {
   letter-spacing: 0.03em;
 }
 
+.ccm-version {
+  display: inline-flex;
+  margin-left: 5px;
+  padding: 2px 5px;
+  border: 1px solid rgb(214 173 98 / 35%);
+  border-radius: 999px;
+  color: var(--ccm-gold);
+  font-size: 10px;
+  line-height: 1;
+  vertical-align: middle;
+}
+
 .ccm-brand span {
   margin-top: 2px;
   color: var(--ccm-muted);
@@ -1001,6 +1013,20 @@ body.ccm-workspace-open > #toast-container {
 
 #ccm-overlay button:hover {
   filter: brightness(1.13);
+}
+
+#ccm-overlay button:disabled {
+  border-color: #303846 !important;
+  color: #747e8e !important;
+  background: #121824 !important;
+  box-shadow: none !important;
+  opacity: 0.52;
+  filter: grayscale(1) !important;
+  cursor: not-allowed;
+}
+
+#ccm-overlay button:disabled i {
+  color: #687180 !important;
 }
 
 .ccm-graph-scroll {
