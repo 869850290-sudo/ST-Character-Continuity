@@ -14,6 +14,8 @@ const DEFAULT_SETTINGS = Object.freeze({
   maxChars: 6000,
   includeQuiet: false,
   showToastOnRecall: false,
+  analysisAutoEnabled: false,
+  analysisInterval: 10,
 });
 
 let lastRecall = null;
@@ -43,14 +45,14 @@ function notify(type, message, title = "人物连续性记忆") {
   else console[type === "error" ? "error" : "log"](`[${title}] ${message}`);
 }
 
-function callBackend(endpoint, payload = {}) {
+function callBackend(endpoint, payload = {}, options = {}) {
   return new Promise((resolve, reject) => {
     $.ajax({
       url: `${API_ROOT}${endpoint}`,
       type: "POST",
       contentType: "application/json",
       data: JSON.stringify(payload),
-      timeout: 30_000,
+      timeout: Number(options.timeout ?? 45_000),
       success: resolve,
       error: (xhr, status) => {
         let message = xhr.responseJSON?.error || xhr.responseText || xhr.statusText;
@@ -59,6 +61,35 @@ function callBackend(endpoint, payload = {}) {
       },
     });
   });
+}
+
+function currentChatSnapshot() {
+  const ctx = context();
+  const current = ctx.characters?.[ctx.characterId];
+  const firstDate = ctx.chat?.find((message) => message?.send_date)?.send_date ?? "undated";
+  const chatId = typeof ctx.getCurrentChatId === "function"
+    ? ctx.getCurrentChatId()
+    : ctx.chatId;
+  const chatKey = String(
+    chatId ||
+    ctx.chatMetadata?.chat_id ||
+    ctx.chatMetadata?.create_date ||
+    `${current?.name || ctx.characterId || "chat"}:${firstDate}`,
+  );
+  return {
+    chatKey,
+    chatTitle: String(chatId || current?.name || "当前聊天"),
+    latestFloor: Math.max(-1, (ctx.chat?.length ?? 0) - 1),
+    messages: (ctx.chat ?? []).map((message, floor) => ({
+      floor,
+      is_user: Boolean(message?.is_user),
+      is_system: Boolean(message?.is_system),
+      name: String(message?.name ?? ""),
+      send_date: String(message?.send_date ?? ""),
+      mes: String(message?.mes ?? ""),
+    })).filter((message) => !message.is_system && message.mes),
+    priorityCharacters: candidateCharacters(),
+  };
 }
 
 function recentText(chat) {
@@ -192,6 +223,7 @@ async function initializeUi() {
     callBackend,
     runRecall,
     getLastRecall: () => lastRecall,
+    getChatSnapshot: currentChatSnapshot,
   });
   addExtensionButton();
   if (!document.querySelector("#ccm_settings")) {
@@ -217,4 +249,8 @@ ctx.eventSource?.on(readyEvent, initializeUi);
 if (document.readyState !== "loading") setTimeout(initializeUi, 0);
 else document.addEventListener("DOMContentLoaded", initializeUi, { once: true });
 
-console.log("[Character Continuity] 前端扩展 v0.2.1 已加载");
+setInterval(() => {
+  if (settings().analysisAutoEnabled) workspace?.autoCheck();
+}, 15_000);
+
+console.log("[Character Continuity] 前端扩展 v0.3.0 已加载");

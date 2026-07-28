@@ -9,6 +9,7 @@ const EMPTY_STATE = Object.freeze({
   relationOverrides: {},
   graphPositions: {},
   batches: {},
+  analysisProgress: {},
 });
 
 const PROFILE_FIELDS = new Set([
@@ -57,6 +58,7 @@ function normalizeState(input) {
     "relationOverrides",
     "graphPositions",
     "batches",
+    "analysisProgress",
   ]) {
     if (!state[key] || typeof state[key] !== "object" || Array.isArray(state[key])) {
       state[key] = {};
