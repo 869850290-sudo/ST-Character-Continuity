@@ -3,11 +3,14 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 const {
+  allMilestones,
   chatBindingKey,
   cloneLibraryData,
   createLibrary,
   materializeProfiles,
+  materializeRelationships,
   normalizeState,
+  renameCharacter,
   resolveLibrary,
 } = require("../server/state.cjs");
 
@@ -163,4 +166,97 @@ test("旧版故事与时间线状态会迁移为独立档案库", () => {
   const profile = Object.values(migrated.baseProfiles)[0];
   assert.ok(profile.library_id);
   assert.equal(profile.story_id, undefined);
+});
+
+test("人物改名会同步画像、成长记录、关系和人工配置", () => {
+  const state = normalizeState({
+    version: 3,
+    libraries: { shared: library("shared", "共享主线") },
+    baseProfiles: {
+      "shared::旧名": {
+        library_id: "shared",
+        character: "旧名",
+        current_profile: { personality: "冷静" },
+      },
+    },
+    profileOverrides: {
+      "shared::旧名": {
+        library_id: "shared",
+        character: "旧名",
+        current_profile: { personality: "人工版本" },
+        active_milestone_ids: ["batch-1:milestone:旧名:0"],
+        active: true,
+      },
+    },
+    baseRelations: {
+      "shared::旧名→同伴": {
+        library_id: "shared",
+        from: "旧名",
+        to: "同伴",
+        active: true,
+      },
+    },
+    relationOverrides: {
+      "shared::同伴→旧名": {
+        library_id: "shared",
+        from: "同伴",
+        to: "旧名",
+        active: true,
+      },
+    },
+    profileLocks: {
+      "shared::旧名": { "current_profile.personality": "锁定性格" },
+    },
+    graphPositions: {
+      "shared::旧名": { x: 100, y: 200 },
+    },
+    batches: {
+      "batch-1": {
+        batchId: "batch-1",
+        libraryId: "shared",
+        order: 1,
+        status: "committed",
+        acceptedAt: "2026-07-29T01:00:00Z",
+        result: {
+          character_audit: [{ character: "旧名" }],
+          profile_updates: [{
+            character: "旧名",
+            decision: "update",
+            proposed_profile: {
+              current_profile: { personality: "成长后" },
+              growth_synopsis: "成长记录",
+              residual_patterns: [],
+            },
+            milestone_candidates: [{
+              character: "旧名",
+              title: "第一次改变",
+              narrative: "人物发生改变。",
+              change_trace: "旧模式到新模式",
+              related_characters: ["旧名", "同伴"],
+            }],
+          }],
+          relation_changes: [{
+            decision: "update",
+            from: "旧名",
+            to: "同伴",
+          }],
+        },
+      },
+    },
+  });
+
+  const renamed = renameCharacter(state, "shared", "旧名", "新名");
+  const profiles = Object.values(materializeProfiles(renamed, "shared"));
+  const milestones = allMilestones(renamed, "shared");
+  const relations = Object.values(materializeRelationships(renamed, "shared"));
+
+  assert.equal(profiles.length, 1);
+  assert.equal(profiles[0].character, "新名");
+  assert.ok(profiles[0].active_milestone_ids.includes("batch-1:milestone:新名:0"));
+  assert.equal(milestones[0].character, "新名");
+  assert.deepEqual(milestones[0].related_characters, ["新名", "同伴"]);
+  assert.ok(relations.every((edge) => edge.from !== "旧名" && edge.to !== "旧名"));
+  assert.ok(renamed.profileLocks["shared::新名"]);
+  assert.ok(renamed.graphPositions["shared::新名"]);
+  assert.equal(renamed.batches["batch-1"].result.character_audit[0].character, "新名");
 });

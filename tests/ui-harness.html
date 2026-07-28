@@ -140,7 +140,9 @@
       settings: () => settings,
       saveSettings() {},
       notify(type, message) { console.log(type, message); },
-      async callBackend(endpoint) {
+      async callBackend(endpoint, payload) {
+        window.__ccmHarnessCalls ??= [];
+        window.__ccmHarnessCalls.push({ endpoint, payload });
         if (endpoint === "/workspace") return { success: true, workspace };
         if (endpoint === "/analysis/config/get") return {
           success: true,
@@ -154,7 +156,7 @@
             hasApiKey: true,
           },
         };
-        if (endpoint === "/health") return { success: true, version: "0.4.1", batches: 2 };
+        if (endpoint === "/health") return { success: true, version: "0.4.7", batches: 2 };
         if (endpoint === "/state/get") return { success: true, state: {} };
         return { success: true };
       },

@@ -380,6 +380,111 @@ function materializeRelationships(stateInput, libraryId) {
   );
 }
 
+function renameCharacter(stateInput, libraryIdInput, previousNameInput, nextNameInput) {
+  const state = normalizeState(stateInput);
+  const libraryId = String(libraryIdInput ?? "").trim();
+  const previousName = String(previousNameInput ?? "").trim();
+  const nextName = String(nextNameInput ?? "").trim();
+  if (!libraryId || !previousName || !nextName) {
+    throw new Error("人物改名缺少档案库、原姓名或新姓名。");
+  }
+  if (!state.libraries[libraryId]) throw new Error("人物所在的档案库不存在。");
+
+  const previousKey = profileKey(libraryId, previousName);
+  const nextKey = profileKey(libraryId, nextName);
+  const profiles = materializeProfiles(state, libraryId);
+  if (!profiles[previousKey]) throw new Error(`找不到人物“${previousName}”。`);
+  if (previousKey !== nextKey && profiles[nextKey]) {
+    throw new Error(`人物“${nextName}”已经存在，请换一个名字。`);
+  }
+
+  const milestoneIdMap = new Map();
+  for (const batch of Object.values(state.batches)) {
+    if (batch?.libraryId !== libraryId) continue;
+    for (const update of batch.result?.profile_updates ?? []) {
+      if (update.character !== previousName) continue;
+      (update.milestone_candidates ?? []).forEach((_, index) => {
+        milestoneIdMap.set(
+          `${batch.batchId}:milestone:${normalizeId(previousName)}:${index}`,
+          `${batch.batchId}:milestone:${normalizeId(nextName)}:${index}`,
+        );
+      });
+    }
+  }
+
+  const moveProfile = (mapName) => {
+    const source = state[mapName];
+    const profile = source[previousKey];
+    if (!profile) return;
+    const activeMilestoneIds = (profile.active_milestone_ids ?? [])
+      .map((id) => milestoneIdMap.get(id) ?? id);
+    source[nextKey] = {
+      ...profile,
+      character: nextName,
+      active_milestone_ids: activeMilestoneIds,
+      updated_at: new Date().toISOString(),
+    };
+    if (previousKey !== nextKey) delete source[previousKey];
+  };
+  moveProfile("baseProfiles");
+  moveProfile("profileOverrides");
+
+  for (const mapName of ["profileLocks", "graphPositions"]) {
+    const source = state[mapName];
+    if (!Object.hasOwn(source, previousKey)) continue;
+    if (previousKey !== nextKey && Object.hasOwn(source, nextKey)) {
+      throw new Error(`人物“${nextName}”已有独立配置，无法安全合并。`);
+    }
+    source[nextKey] = source[previousKey];
+    if (previousKey !== nextKey) delete source[previousKey];
+  }
+
+  const renameRelationMap = (mapName) => {
+    const renamed = {};
+    for (const [key, edge] of Object.entries(state[mapName])) {
+      if (edge?.library_id !== libraryId) {
+        renamed[key] = edge;
+        continue;
+      }
+      const nextEdge = {
+        ...edge,
+        from: edge.from === previousName ? nextName : edge.from,
+        to: edge.to === previousName ? nextName : edge.to,
+      };
+      const nextRelationKey = relationKey(libraryId, nextEdge.from, nextEdge.to);
+      if (Object.hasOwn(renamed, nextRelationKey)) {
+        throw new Error(`改名后会产生重复关系：${nextEdge.from} → ${nextEdge.to}。`);
+      }
+      renamed[nextRelationKey] = nextEdge;
+    }
+    state[mapName] = renamed;
+  };
+  renameRelationMap("baseRelations");
+  renameRelationMap("relationOverrides");
+
+  for (const batch of Object.values(state.batches)) {
+    if (batch?.libraryId !== libraryId || !batch.result) continue;
+    for (const audit of batch.result.character_audit ?? []) {
+      if (audit.character === previousName) audit.character = nextName;
+    }
+    for (const update of batch.result.profile_updates ?? []) {
+      if (update.character === previousName) update.character = nextName;
+      for (const milestone of update.milestone_candidates ?? []) {
+        if (milestone.character === previousName) milestone.character = nextName;
+        milestone.related_characters = (milestone.related_characters ?? [])
+          .map((name) => name === previousName ? nextName : name);
+      }
+    }
+    for (const relation of batch.result.relation_changes ?? []) {
+      if (relation.from === previousName) relation.from = nextName;
+      if (relation.to === previousName) relation.to = nextName;
+    }
+  }
+
+  state.libraries[libraryId].updated_at = new Date().toISOString();
+  return state;
+}
+
 function cloneLibraryData(stateInput, sourceLibraryId, targetLibrary) {
   const state = normalizeState(stateInput);
   if (!state.libraries[sourceLibraryId]) throw new Error("找不到要克隆的档案库。");
@@ -440,6 +545,7 @@ module.exports = {
   normalizeState,
   profileKey,
   progressKey,
+  renameCharacter,
   relationKey,
   resolveLibrary,
   valueAtPath,
