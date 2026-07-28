@@ -6,15 +6,24 @@ const path = require("node:path");
 const root = path.resolve(__dirname, "..");
 const read = (file) => fs.readFileSync(path.join(root, file), "utf8");
 
-test("v0.4.2 frontend release is visibly versioned and cache-busted", () => {
+test("v0.4.3 frontend release is visibly versioned and cache-busted", () => {
   const manifest = JSON.parse(read("manifest.json"));
   const entry = read("index.js");
   const workspace = read("scripts/workspace.js");
 
-  assert.equal(manifest.version, "0.4.2");
+  assert.equal(manifest.version, "0.4.3");
   assert.equal(manifest.auto_update, true);
-  assert.match(entry, /workspace\.js\?v=0\.4\.2/);
+  assert.match(entry, /workspace\.js\?v=0\.4\.3/);
   assert.match(workspace, /ccm-version">v\$\{FRONTEND_VERSION\}/);
+});
+
+test("library editor uses a native top-layer dialog", () => {
+  const workspace = read("scripts/workspace.js");
+  const styles = read("style.css");
+
+  assert.match(workspace, /<dialog id="ccm-library-dialog"/);
+  assert.match(workspace, /dialog\.showModal/);
+  assert.match(styles, /\.ccm-native-dialog\[open\]/);
 });
 
 test("workspace supports real touch activation and clear disabled styling", () => {

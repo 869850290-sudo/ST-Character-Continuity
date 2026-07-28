@@ -1,6 +1,6 @@
 const GRAPH_WIDTH = 1000;
 const GRAPH_HEIGHT = 660;
-const FRONTEND_VERSION = "0.4.2";
+const FRONTEND_VERSION = "0.4.3";
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -693,7 +693,7 @@ export function initCharacterWorkspace(deps) {
         ? current.name
         : `${state.workspace?.context?.cardName || "角色"}人物档案`;
     const defaultDescription = mode === "edit" || mode === "clone" ? current.description || "" : "";
-    modalRoot.innerHTML = `<div class="ccm-modal-backdrop">
+    modalRoot.innerHTML = `<dialog id="ccm-library-dialog" class="ccm-native-dialog">
       <form id="ccm-library-form" class="ccm-modal ccm-library-modal">
         <header><div><span>MEMORY LIBRARY</span><h3>${title}</h3></div>
           <button type="button" data-modal-close>×</button></header>
@@ -711,9 +711,18 @@ export function initCharacterWorkspace(deps) {
           <button type="button" data-modal-close>取消</button>
           <button type="submit" class="ccm-primary">${mode === "clone" ? "克隆并绑定" : "保存"}</button>
         </footer>
-      </form></div>`;
+      </form></dialog>`;
+    const dialog = modalRoot.querySelector("#ccm-library-dialog");
+    const closeLibraryModal = () => {
+      if (dialog.open) dialog.close();
+      modalRoot.innerHTML = "";
+    };
     modalRoot.querySelectorAll("[data-modal-close]").forEach((button) =>
-      button.addEventListener("click", () => { modalRoot.innerHTML = ""; }));
+      button.addEventListener("click", closeLibraryModal));
+    dialog.addEventListener("cancel", (event) => {
+      event.preventDefault();
+      closeLibraryModal();
+    });
     modalRoot.querySelector("#ccm-library-form").addEventListener("submit", async (event) => {
       event.preventDefault();
       const form = new FormData(event.currentTarget);
@@ -745,12 +754,14 @@ export function initCharacterWorkspace(deps) {
         deps.notify("success", mode === "clone"
           ? "档案库已克隆并绑定到当前聊天。"
           : mode === "edit" ? "档案库资料已保存。" : "档案库已创建并绑定到当前聊天。");
-        modalRoot.innerHTML = "";
+        closeLibraryModal();
         await loadWorkspace();
       } catch (error) {
         modalRoot.querySelector("#ccm-library-error").textContent = error.message;
       }
     });
+    if (typeof dialog.showModal === "function") dialog.showModal();
+    else dialog.setAttribute("open", "");
   }
 
   function profileModal(profile, isManual) {
