@@ -217,10 +217,16 @@ function orderedBatches(state, libraryId) {
       String(a.batchId ?? "").localeCompare(String(b.batchId ?? "")));
 }
 
-function createEmptyProfile(libraryId, character) {
+function createEmptyProfile(libraryId, character, registry = {}) {
   return {
     library_id: libraryId,
     character,
+    aliases: clone(registry.aliases ?? []),
+    identity_status: String(registry.identity_status ?? "named"),
+    identification_basis: String(registry.identification_basis ?? ""),
+    retention_tier: String(registry.retention_tier ?? "recurring"),
+    narrative_role: String(registry.narrative_role ?? "unknown"),
+    registry_reason: String(registry.reason ?? ""),
     current_profile: {
       personality: "",
       behavior_pattern: "",
@@ -275,6 +281,21 @@ function materializeProfiles(stateInput, libraryId) {
       .map(([, value]) => [profileKey(libraryId, value.character), clone(value)]),
   );
   for (const batch of orderedBatches(state, libraryId)) {
+    for (const registry of batch.result?.character_registry ?? []) {
+      if (!registry?.character || registry.retention_tier === "ephemeral") continue;
+      const key = profileKey(libraryId, registry.character);
+      const current = profiles[key] ?? createEmptyProfile(libraryId, registry.character, registry);
+      profiles[key] = {
+        ...current,
+        aliases: [...new Set([...(current.aliases ?? []), ...(registry.aliases ?? [])].map(String))],
+        identity_status: registry.identity_status || current.identity_status || "ambiguous",
+        identification_basis: registry.identification_basis || current.identification_basis || "",
+        retention_tier: registry.retention_tier || current.retention_tier || "watchlist",
+        narrative_role: registry.narrative_role || current.narrative_role || "unknown",
+        registry_reason: registry.reason || current.registry_reason || "",
+        last_source: current.last_source || `${batch.fileName ?? ""} · ${batch.range ?? ""}`,
+      };
+    }
     for (const update of batch.result?.profile_updates ?? []) {
       if (update.decision !== "update" || !update.proposed_profile) continue;
       const key = profileKey(libraryId, update.character);
@@ -525,6 +546,11 @@ function renameCharacter(
 
   for (const batch of Object.values(state.batches)) {
     if (batch?.libraryId !== libraryId || !batch.result) continue;
+    for (const registry of batch.result.character_registry ?? []) {
+      if (registry.character === previousName) registry.character = nextName;
+      registry.aliases = (registry.aliases ?? [])
+        .map((name) => name === previousName ? nextName : name);
+    }
     for (const audit of batch.result.character_audit ?? []) {
       if (audit.character === previousName) audit.character = nextName;
     }

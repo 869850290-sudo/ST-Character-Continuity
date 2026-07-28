@@ -79,10 +79,20 @@ function startAnalysisJob(payload, state, config) {
     result: null,
     error: "",
     accepted: false,
+    stage: "queued",
+    stageLabel: "分析任务已进入队列",
+    stageCurrent: 0,
+    stageTotal: 1,
   };
   analysisJobs.set(job.id, job);
   Promise.resolve()
-    .then(() => runAnalysis(config, payload, state))
+    .then(() => runAnalysis(config, payload, state, (progress) => {
+      job.stage = text(progress?.stage, 100) || "running";
+      job.stageLabel = text(progress?.label, 1000) || "人物分析进行中";
+      job.stageCurrent = Math.max(0, Number(progress?.current ?? 0));
+      job.stageTotal = Math.max(1, Number(progress?.total ?? 1));
+      job.updatedAt = Date.now();
+    }))
     .then((result) => {
       job.result = result;
       job.status = "completed";
@@ -103,6 +113,10 @@ function publicJob(job) {
     status: job.status,
     error: job.error,
     accepted: job.accepted,
+    stage: job.stage,
+    stageLabel: job.stageLabel,
+    stageCurrent: job.stageCurrent,
+    stageTotal: job.stageTotal,
     createdAt: new Date(job.createdAt).toISOString(),
     updatedAt: new Date(job.updatedAt).toISOString(),
     payload: {
@@ -159,6 +173,12 @@ function profileFromRequest(raw) {
   return {
     library_id: libraryId,
     character,
+    aliases: stringList(raw?.aliases, 30),
+    identity_status: text(raw?.identity_status, 100) || "named",
+    identification_basis: text(raw?.identification_basis, 3000),
+    retention_tier: text(raw?.retention_tier, 100) || "recurring",
+    narrative_role: text(raw?.narrative_role, 100) || "unknown",
+    registry_reason: text(raw?.registry_reason, 5000),
     current_profile: {
       personality: text(raw?.current_profile?.personality),
       behavior_pattern: text(raw?.current_profile?.behavior_pattern),
@@ -246,7 +266,7 @@ async function init(router) {
       const state = await store.read();
       res.json({
         success: true,
-        version: "0.4.8",
+        version: "0.5.0",
         stateVersion: state.version,
         batches: Object.keys(state.batches).length,
       });

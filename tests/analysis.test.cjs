@@ -8,6 +8,7 @@ const path = require("node:path");
 const test = require("node:test");
 const {
   buildUserContent,
+  normalizeRegistry,
   normalizeOpenAiUrl,
   normalizeResult,
   requestModel,
@@ -70,6 +71,30 @@ test("模型结果被规范成画像、里程碑和有向关系结构", () => {
   assert.equal(result.profile_updates[0].milestone_candidates[0].source.start_floor, 10);
   assert.equal(result.profile_updates[0].milestone_candidates[0].source.end_floor, 19);
   assert.equal(result.relation_changes[0].strength, 1);
+});
+
+test("人物登记保留无名重要角色，并补入优先主角", () => {
+  const registry = normalizeRegistry(JSON.stringify({
+    characters: [{
+      character: "兰芝高中·秘书长",
+      aliases: ["秘书长"],
+      identity_status: "title_only",
+      retention_tier: "watchlist",
+      narrative_role: "antagonist",
+      reason: "掌握权力并留下未解决冲突。",
+      evidence: ["要求取得未署名文件"],
+    }, {
+      character: "西楼茶叙·女职员A",
+      identity_status: "ambiguous",
+      retention_tier: "ephemeral",
+      narrative_role: "extra",
+    }],
+  }), ["Fi"]);
+  assert.equal(registry.characters.length, 3);
+  assert.equal(registry.characters[0].character, "兰芝高中·秘书长");
+  assert.equal(registry.characters[0].retention_tier, "watchlist");
+  assert.equal(registry.characters[2].character, "Fi");
+  assert.equal(registry.characters[2].retention_tier, "core");
 });
 
 test("构造人物分析上下文时包含全部选中楼层与已有画像", () => {

@@ -1,6 +1,6 @@
 const GRAPH_WIDTH = 1000;
 const GRAPH_HEIGHT = 660;
-const FRONTEND_VERSION = "0.4.8";
+const FRONTEND_VERSION = "0.5.0";
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -303,6 +303,7 @@ export function initCharacterWorkspace(deps) {
   function analysisResultHtml(job) {
     const result = job?.result;
     if (!result) return "";
+    const registry = result.character_registry ?? [];
     const updates = (result.profile_updates ?? []).filter((item) => item.decision === "update");
     const milestones = updates.flatMap((item) => item.milestone_candidates ?? []);
     const relations = (result.relation_changes ?? []).filter((item) =>
@@ -312,11 +313,17 @@ export function initCharacterWorkspace(deps) {
         <header>
           <div><span>ANALYSIS PREVIEW</span><h3>人物更新预览</h3></div>
           <div class="ccm-analysis-counts">
+            <b>${registry.length}<small>登记</small></b>
             <b>${updates.length}<small>画像</small></b>
             <b>${milestones.length}<small>成长</small></b>
             <b>${relations.length}<small>关系</small></b>
           </div>
         </header>
+        ${registry.length ? `<div class="ccm-registry-preview">
+          ${registry.map((item) => `<span class="tier-${escapeHtml(item.retention_tier)}">
+            ${escapeHtml(item.character)} · ${escapeHtml(item.retention_tier)} · ${escapeHtml(item.narrative_role)}
+          </span>`).join("")}
+        </div>` : ""}
         ${(result.character_audit ?? []).length ? `<div class="ccm-audit-strip">
           ${(result.character_audit ?? []).map((item) =>
             `<span class="${escapeHtml(item.decision)}">${escapeHtml(item.character)} · ${escapeHtml(item.decision)}</span>`,
@@ -408,8 +415,12 @@ export function initCharacterWorkspace(deps) {
             ${running ? "模型正在分析…" : "执行人物分析"}
           </button>
         </div>
-        ${running ? `<div class="ccm-job-running"><b>任务已交给服务器后台处理</b>
-          <span>网页会每两秒取一次结果，不会再因 Cloudflare 等待过久而报 524。</span></div>` : ""}
+        ${running ? `<div class="ccm-job-running"><b>${escapeHtml(
+          state.analysisJob?.stageLabel || "任务已交给服务器后台处理",
+        )}</b>
+          <span>阶段 ${Number(state.analysisJob?.stageCurrent ?? 0)}/${Number(
+            state.analysisJob?.stageTotal ?? 1,
+          )} · 网页会每两秒自动读取进度。</span></div>` : ""}
         ${state.analysisPreview ? analysisResultHtml(state.analysisPreview) : ""}
       </section>
       <section class="ccm-analysis-panel">
@@ -470,7 +481,8 @@ export function initCharacterWorkspace(deps) {
         <article class="ccm-profile-card">
           <header>
             <div class="ccm-avatar">${escapeHtml(initials(profile.character))}</div>
-            <div><span>PROFILE · V${Number(profile.version ?? 0)}</span><h3>${escapeHtml(profile.character)}</h3></div>
+            <div><span>PROFILE · V${Number(profile.version ?? 0)}</span><h3>${escapeHtml(profile.character)}</h3>
+              <small>${escapeHtml(profile.retention_tier || "recurring")} · ${escapeHtml(profile.narrative_role || "unknown")}</small></div>
             <button class="ccm-card-edit" data-action="edit-profile" data-key="${escapeHtml(key)}">
               <i class="fa-solid fa-pen"></i> 编辑
             </button>
@@ -784,6 +796,17 @@ export function initCharacterWorkspace(deps) {
         <div class="ccm-modal-grid">
           <label class="wide">人物姓名<input name="character" maxlength="200"
             value="${escapeHtml(profile.character)}" required></label>
+          <label>保留等级<select name="retention_tier">
+            ${["core", "recurring", "watchlist", "ephemeral"].map((value) =>
+              `<option value="${value}" ${profile.retention_tier === value ? "selected" : ""}>${value}</option>`,
+            ).join("")}</select></label>
+          <label>叙事作用<select name="narrative_role">
+            ${["protagonist", "major_support", "antagonist", "recurring", "minor", "extra", "unknown"].map((value) =>
+              `<option value="${value}" ${profile.narrative_role === value ? "selected" : ""}>${value}</option>`,
+            ).join("")}</select></label>
+          <label class="wide">别名/称谓（每行一个）<textarea name="aliases">${escapeHtml(
+            (profile.aliases ?? []).join("\n"),
+          )}</textarea></label>
           <label>性格<textarea name="personality">${escapeHtml(profile.current_profile?.personality)}</textarea></label>
           <label>行动方式<textarea name="behavior_pattern">${escapeHtml(profile.current_profile?.behavior_pattern)}</textarea></label>
           <label>核心需求<textarea name="core_need">${escapeHtml(profile.current_profile?.core_need)}</textarea></label>
@@ -829,6 +852,10 @@ export function initCharacterWorkspace(deps) {
           profile: {
             ...profile,
             character,
+            retention_tier: form.get("retention_tier"),
+            narrative_role: form.get("narrative_role"),
+            aliases: String(form.get("aliases") ?? "").split(/\r?\n/)
+              .map((item) => item.trim()).filter(Boolean),
             current_profile: {
               personality: form.get("personality"),
               behavior_pattern: form.get("behavior_pattern"),
