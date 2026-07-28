@@ -25,17 +25,19 @@ class StateStore {
     return normalizeState(JSON.parse(raw));
   }
 
-  async replace(nextState, reason = "replace") {
+  async replace(nextState, reason = "replace", createBackup = true) {
     const normalized = normalizeState(nextState);
     this.queue = this.queue.then(async () => {
       await this.initialize();
-      const current = await fs.promises.readFile(this.statePath, "utf8");
-      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-      const safeReason = String(reason).replace(/[^\p{L}\p{N}_-]+/gu, "_").slice(0, 40);
-      const backupPath = path.join(this.backupRoot, `${stamp}-${safeReason || "backup"}.json`);
-      await fs.promises.writeFile(backupPath, current, "utf8");
+      if (createBackup) {
+        const current = await fs.promises.readFile(this.statePath, "utf8");
+        const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+        const safeReason = String(reason).replace(/[^\p{L}\p{N}_-]+/gu, "_").slice(0, 40);
+        const backupPath = path.join(this.backupRoot, `${stamp}-${safeReason || "backup"}.json`);
+        await fs.promises.writeFile(backupPath, current, "utf8");
+      }
       await this.#writeAtomic(normalized);
-      await this.#trimBackups();
+      if (createBackup) await this.#trimBackups();
       return normalized;
     });
     return this.queue;
@@ -61,4 +63,3 @@ class StateStore {
 }
 
 module.exports = { StateStore };
-

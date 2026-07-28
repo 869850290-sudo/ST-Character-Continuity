@@ -3,6 +3,7 @@
 const EMPTY_STATE = Object.freeze({
   version: 2,
   baseProfiles: {},
+  profileOverrides: {},
   baseRelations: {},
   profileLocks: {},
   relationOverrides: {},
@@ -50,6 +51,7 @@ function normalizeState(input) {
   };
   for (const key of [
     "baseProfiles",
+    "profileOverrides",
     "baseRelations",
     "profileLocks",
     "relationOverrides",
@@ -157,6 +159,14 @@ function materializeProfiles(stateInput, storyId, timelineId) {
     if (profiles[key]) profiles[key] = applyProfileLocks(profiles[key], locks);
   }
 
+  for (const [key, override] of Object.entries(state.profileOverrides)) {
+    if (override?.active === false) {
+      delete profiles[key];
+      continue;
+    }
+    profiles[key] = clone(override);
+  }
+
   return Object.fromEntries(
     Object.entries(profiles).filter(([, profile]) =>
       (!storyId || profile.story_id === storyId) &&
@@ -239,4 +249,3 @@ module.exports = {
   relationKey,
   valueAtPath,
 };
-
