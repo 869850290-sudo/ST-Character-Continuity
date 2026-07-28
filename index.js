@@ -1,8 +1,8 @@
-import { initCharacterWorkspace } from "./scripts/workspace.js?v=0.4.2";
+import { initCharacterWorkspace } from "./scripts/workspace.js?v=0.4.3";
 
 const MODULE_NAME = "character_continuity";
 const API_ROOT = "/api/plugins/character-continuity";
-const FRONTEND_VERSION = "0.4.2";
+const FRONTEND_VERSION = "0.4.3";
 
 const DEFAULT_SETTINGS = Object.freeze({
   enabled: false,

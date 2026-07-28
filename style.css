@@ -1319,6 +1319,31 @@ body.ccm-workspace-open > #toast-container {
   backdrop-filter: blur(8px);
 }
 
+.ccm-native-dialog {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  max-width: none;
+  height: 100vh;
+  height: 100dvh;
+  max-height: none;
+  margin: 0;
+  padding: 18px;
+  border: 0;
+  color: var(--ccm-text);
+  background: rgb(2 6 12 / 78%);
+  backdrop-filter: blur(8px);
+}
+
+.ccm-native-dialog[open] {
+  display: grid;
+  place-items: center;
+}
+
+.ccm-native-dialog::backdrop {
+  background: rgb(2 6 12 / 78%);
+}
+
 .ccm-modal {
   width: min(900px, 100%);
   max-height: calc(100vh - 36px);
