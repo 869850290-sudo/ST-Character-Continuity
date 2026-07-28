@@ -1272,14 +1272,18 @@ export function initCharacterWorkspace(deps) {
     }
   }
 
-  view.addEventListener("click", (event) => {
-    const button = event.target.closest("[data-action]");
-    if (button) handleAction(button.dataset.action, button);
-  });
-  document.querySelector("#ccm-workspace-meta").addEventListener("click", (event) => {
-    const button = event.target.closest("[data-action]");
-    if (button) handleAction(button.dataset.action, button);
-  });
+  overlay.addEventListener("click", (event) => {
+    const path = typeof event.composedPath === "function" ? event.composedPath() : [];
+    const button = path.find((node) =>
+      node instanceof HTMLElement && node.dataset?.action)
+      ?? (event.target instanceof Element
+        ? event.target.closest("[data-action]")
+        : event.target?.parentElement?.closest?.("[data-action]"));
+    if (!button || button.disabled || modalRoot.contains(button)) return;
+    Promise.resolve(handleAction(button.dataset.action, button)).catch((error) => {
+      deps.notify("error", `操作没有完成：${error.message}`);
+    });
+  }, { capture: true });
   view.addEventListener("change", (event) => {
     if (event.target.id === "ccm-graph-focus") {
       state.focus = event.target.value;
