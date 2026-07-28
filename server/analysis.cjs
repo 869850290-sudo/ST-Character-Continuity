@@ -242,21 +242,29 @@ function buildUserContent(payload, state) {
   if (context.length > MAX_CONTEXT_LENGTH) {
     throw new Error("所选楼层超过 90 万字符，请缩小范围。");
   }
-  const profiles = materializeProfiles(state, payload.storyId, payload.timelineId);
-  const relations = materializeRelationships(state, payload.storyId, payload.timelineId);
+  const profiles = materializeProfiles(state, payload.libraryId);
+  const relations = materializeRelationships(state, payload.libraryId);
   const priority = [...new Set([
     ...strings(payload.priorityCharacters, 100, 200),
     ...Object.values(profiles).map((profile) => profile.character),
   ])];
   const relevantLocks = Object.fromEntries(
     Object.entries(state.profileLocks ?? {}).filter(([key]) =>
-      key.startsWith(`${String(payload.storyId).toLocaleLowerCase()}::`)),
+      key.startsWith(`${String(payload.libraryId).toLocaleLowerCase()}::`)),
   );
   return {
     range,
     context,
     userContent:
-`<batch_source>
+`<memory_library>
+${JSON.stringify({
+    id: payload.libraryId,
+    name: payload.libraryName ?? "",
+    description: payload.libraryDescription ?? "",
+  })}
+</memory_library>
+
+<batch_source>
 ${JSON.stringify({ start_floor: range.start, end_floor: range.end, chat: payload.chatTitle ?? "" })}
 </batch_source>
 

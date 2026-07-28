@@ -74,19 +74,21 @@ test("模型结果被规范成画像、里程碑和有向关系结构", () => {
 
 test("构造人物分析上下文时包含全部选中楼层与已有画像", () => {
   const state = normalizeState({
-    version: 2,
+    version: 3,
+    libraries: {
+      "library-main": { id: "library-main", name: "恶役主线", archived: false },
+    },
     baseProfiles: {
-      "恶役::主线::牧知傲": {
-        story_id: "恶役",
-        timeline_id: "主线",
+      "library-main::牧知傲": {
+        library_id: "library-main",
         character: "牧知傲",
         current_profile: {},
       },
     },
   });
   const built = buildUserContent({
-    storyId: "恶役",
-    timelineId: "主线",
+    libraryId: "library-main",
+    libraryName: "恶役主线",
     chatTitle: "测试聊天",
     startFloor: 0,
     endFloor: 1,

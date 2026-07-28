@@ -8,10 +8,15 @@ const { recall } = require("./recall.cjs");
 const { StateStore } = require("./store.cjs");
 const {
   allMilestones,
+  chatBindingKey,
+  cloneLibraryData,
+  createLibrary,
   materializeProfiles,
   materializeRelationships,
   profileKey,
+  progressKey,
   relationKey,
+  resolveLibrary,
 } = require("./state.cjs");
 
 const DATA_ROOT = path.join(__dirname, "..", "data");
@@ -19,13 +24,9 @@ const store = new StateStore(DATA_ROOT);
 const analysisConfigStore = new AnalysisConfigStore(DATA_ROOT);
 const analysisJobs = new Map();
 
-function progressKey(storyId, timelineId, chatKey) {
-  return profileKey(storyId, timelineId, `chat:${chatKey}`);
-}
-
-function analysisBatches(state, storyId, timelineId, chatKey) {
+function analysisBatches(state, libraryId, chatKey) {
   return Object.values(state.batches)
-    .filter((batch) => batch?.storyId === storyId && batch?.timelineId === timelineId)
+    .filter((batch) => batch?.libraryId === libraryId)
     .filter((batch) => !chatKey || batch.chatKey === chatKey)
     .sort((a, b) => Number(b.order ?? 0) - Number(a.order ?? 0));
 }
@@ -58,8 +59,7 @@ function startAnalysisJob(payload, state, config) {
   cleanupJobs();
   const runningForChat = [...analysisJobs.values()].filter((job) =>
     job.status === "running" &&
-    job.payload.storyId === payload.storyId &&
-    job.payload.timelineId === payload.timelineId &&
+    job.payload.libraryId === payload.libraryId &&
     job.payload.chatKey === payload.chatKey);
   const existing = runningForChat.find((job) =>
     Number(job.payload.startFloor) === Number(payload.startFloor) &&
@@ -150,15 +150,13 @@ function normalizeResidualPatterns(value) {
 }
 
 function profileFromRequest(raw) {
-  const storyId = text(raw?.story_id, 200);
-  const timelineId = text(raw?.timeline_id, 200);
+  const libraryId = text(raw?.library_id, 200);
   const character = text(raw?.character, 200);
-  if (!storyId || !timelineId || !character) {
-    throw new Error("人物画像缺少故事、时间线或人物姓名。");
+  if (!libraryId || !character) {
+    throw new Error("人物画像缺少档案库或人物姓名。");
   }
   return {
-    story_id: storyId,
-    timeline_id: timelineId,
+    library_id: libraryId,
     character,
     current_profile: {
       personality: text(raw?.current_profile?.personality),
@@ -178,18 +176,16 @@ function profileFromRequest(raw) {
 }
 
 function relationFromRequest(raw) {
-  const storyId = text(raw?.story_id, 200);
-  const timelineId = text(raw?.timeline_id, 200);
+  const libraryId = text(raw?.library_id, 200);
   const from = text(raw?.from, 200);
   const to = text(raw?.to, 200);
-  if (!storyId || !timelineId || !from || !to) {
-    throw new Error("人物关系缺少故事、时间线或关系两端。");
+  if (!libraryId || !from || !to) {
+    throw new Error("人物关系缺少档案库或关系两端。");
   }
   if (from === to) throw new Error("同一个人不能与自己建立关系。");
   const strength = Number(raw?.strength);
   return {
-    story_id: storyId,
-    timeline_id: timelineId,
+    library_id: libraryId,
     from,
     to,
     primary_type: text(raw?.primary_type, 300) || "未命名关系",
@@ -207,19 +203,36 @@ function relationFromRequest(raw) {
   };
 }
 
-function workspacePayload(state, storyId, timelineId, chatKey = "") {
-  const key = chatKey ? progressKey(storyId, timelineId, chatKey) : "";
+function workspacePayload(state, cardKey, cardName, chatKey = "", chatTitle = "") {
+  const binding = resolveLibrary(state, cardKey, chatKey);
+  const libraryId = binding.libraryId;
+  const explicitBinding = state.chatBindings[chatBindingKey(cardKey, chatKey)];
+  const cardDefault = state.cardDefaults[cardKey];
+  const key = libraryId && chatKey ? progressKey(libraryId, chatKey) : "";
   return {
-    storyId,
-    timelineId,
-    profiles: materializeProfiles(state, storyId, timelineId),
-    milestones: allMilestones(state, storyId, timelineId),
-    relations: materializeRelationships(state, storyId, timelineId),
+    context: { cardKey, cardName, chatKey, chatTitle },
+    binding: {
+      mode: binding.mode,
+      libraryId,
+      library: binding.library,
+    },
+    explicitLibraryId: explicitBinding?.libraryId ?? "",
+    cardDefaultLibraryId: cardDefault?.libraryId ?? "",
+    libraries: Object.values(state.libraries)
+      .filter((library) => !library.archived)
+      .sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at))),
+    profiles: materializeProfiles(state, libraryId),
+    milestones: allMilestones(state, libraryId),
+    relations: materializeRelationships(state, libraryId),
     graphPositions: state.graphPositions,
     progress: key ? state.analysisProgress[key] ?? null : null,
-    batches: analysisBatches(state, storyId, timelineId, chatKey).slice(0, 50),
+    batches: libraryId ? analysisBatches(state, libraryId).slice(0, 50) : [],
     counts: {
-      batches: Object.values(state.batches).filter((batch) => batch?.status === "committed").length,
+      batches: libraryId
+        ? analysisBatches(state, libraryId).filter(
+          (batch) => batch?.status === "committed",
+        ).length
+        : 0,
     },
   };
 }
@@ -232,7 +245,7 @@ async function init(router) {
       const state = await store.read();
       res.json({
         success: true,
-        version: "0.3.1",
+        version: "0.4.0",
         stateVersion: state.version,
         batches: Object.keys(state.batches).length,
       });
@@ -271,14 +284,161 @@ async function init(router) {
 
   router.post("/workspace", async (req, res) => {
     try {
-      const storyId = text(req.body?.storyId, 200);
-      const timelineId = text(req.body?.timelineId, 200);
+      const cardKey = text(req.body?.cardKey, 500);
+      const cardName = text(req.body?.cardName, 500);
       const chatKey = text(req.body?.chatKey, 500);
+      const chatTitle = text(req.body?.chatTitle, 500);
       const state = await store.read();
       res.json({
         success: true,
-        workspace: workspacePayload(state, storyId, timelineId, chatKey),
+        workspace: workspacePayload(state, cardKey, cardName, chatKey, chatTitle),
       });
+    } catch (error) {
+      errorResponse(res, error);
+    }
+  });
+
+  router.post("/library/create", async (req, res) => {
+    try {
+      const state = await store.read();
+      const library = createLibrary({
+        name: text(req.body?.name, 200),
+        description: text(req.body?.description, 2000),
+      });
+      state.libraries[library.id] = library;
+      const saved = await store.replace(state, `library-create-${library.id}`);
+      res.json({
+        success: true,
+        library: saved.libraries[library.id],
+        message: `已创建档案库“${library.name}”。`,
+      });
+    } catch (error) {
+      errorResponse(res, error);
+    }
+  });
+
+  router.post("/library/clone", async (req, res) => {
+    try {
+      const state = await store.read();
+      const sourceLibraryId = text(req.body?.sourceLibraryId, 200);
+      const source = state.libraries[sourceLibraryId];
+      if (!source) throw new Error("找不到要克隆的档案库。");
+      const library = createLibrary({
+        name: text(req.body?.name, 200) || `${source.name}（副本）`,
+        description: text(req.body?.description, 2000) || source.description,
+        sourceLibraryId,
+      });
+      const cloned = cloneLibraryData(state, sourceLibraryId, library);
+      const saved = await store.replace(cloned, `library-clone-${library.id}`);
+      res.json({
+        success: true,
+        library: saved.libraries[library.id],
+        message: `已克隆为“${library.name}”，之后两套资料会各自更新。`,
+      });
+    } catch (error) {
+      errorResponse(res, error);
+    }
+  });
+
+  router.post("/library/update", async (req, res) => {
+    try {
+      const state = await store.read();
+      const libraryId = text(req.body?.libraryId, 200);
+      const library = state.libraries[libraryId];
+      if (!library) throw new Error("找不到要修改的档案库。");
+      library.name = text(req.body?.name, 200) || library.name;
+      library.description = text(req.body?.description, 2000);
+      library.updated_at = new Date().toISOString();
+      const saved = await store.replace(state, `library-update-${libraryId}`);
+      res.json({
+        success: true,
+        library: saved.libraries[libraryId],
+        message: "档案库资料已保存。",
+      });
+    } catch (error) {
+      errorResponse(res, error);
+    }
+  });
+
+  router.post("/binding/chat/set", async (req, res) => {
+    try {
+      const state = await store.read();
+      const cardKey = text(req.body?.cardKey, 500);
+      const chatKey = text(req.body?.chatKey, 500);
+      const libraryId = text(req.body?.libraryId, 200);
+      if (!cardKey || !chatKey || !state.libraries[libraryId]) {
+        throw new Error("当前角色卡、聊天或档案库信息不完整。");
+      }
+      state.chatBindings[chatBindingKey(cardKey, chatKey)] = {
+        cardKey,
+        chatKey,
+        libraryId,
+        boundAt: new Date().toISOString(),
+      };
+      const saved = await store.replace(state, `bind-chat-${chatKey}`);
+      res.json({
+        success: true,
+        workspace: workspacePayload(
+          saved,
+          cardKey,
+          text(req.body?.cardName, 500),
+          chatKey,
+          text(req.body?.chatTitle, 500),
+        ),
+        message: "当前聊天已绑定到所选档案库。",
+      });
+    } catch (error) {
+      errorResponse(res, error);
+    }
+  });
+
+  router.post("/binding/chat/unset", async (req, res) => {
+    try {
+      const state = await store.read();
+      const cardKey = text(req.body?.cardKey, 500);
+      const chatKey = text(req.body?.chatKey, 500);
+      delete state.chatBindings[chatBindingKey(cardKey, chatKey)];
+      const saved = await store.replace(state, `unbind-chat-${chatKey}`);
+      const resolved = resolveLibrary(saved, cardKey, chatKey);
+      res.json({
+        success: true,
+        binding: resolved,
+        message: resolved.mode === "card"
+          ? "已解除当前聊天的单独绑定，现改用角色卡默认档案库。"
+          : "已解除当前聊天绑定；现在不会写入或注入人物资料。",
+      });
+    } catch (error) {
+      errorResponse(res, error);
+    }
+  });
+
+  router.post("/binding/card/set", async (req, res) => {
+    try {
+      const state = await store.read();
+      const cardKey = text(req.body?.cardKey, 500);
+      const libraryId = text(req.body?.libraryId, 200);
+      if (!cardKey || !state.libraries[libraryId]) {
+        throw new Error("当前角色卡或档案库信息不完整。");
+      }
+      state.cardDefaults[cardKey] = {
+        cardKey,
+        libraryId,
+        boundAt: new Date().toISOString(),
+      };
+      await store.replace(state, `bind-card-${cardKey}`);
+      res.json({ success: true, message: "已设为这张角色卡的新聊天默认档案库。" });
+    } catch (error) {
+      errorResponse(res, error);
+    }
+  });
+
+  router.post("/binding/card/unset", async (req, res) => {
+    try {
+      const state = await store.read();
+      const cardKey = text(req.body?.cardKey, 500);
+      delete state.cardDefaults[cardKey];
+      await store.replace(state, `unbind-card-${cardKey}`);
+      res.json({ success: true, message: "已取消这张角色卡的默认档案库。" });
     } catch (error) {
       errorResponse(res, error);
     }
@@ -288,12 +448,13 @@ async function init(router) {
     try {
       const state = await store.read();
       const profile = profileFromRequest(req.body?.profile);
-      const key = profileKey(profile.story_id, profile.timeline_id, profile.character);
+      if (!state.libraries[profile.library_id]) throw new Error("人物画像对应的档案库不存在。");
+      const key = profileKey(profile.library_id, profile.character);
       state.profileOverrides[key] = profile;
       const saved = await store.replace(state, `profile-${profile.character}`);
       res.json({
         success: true,
-        profile: materializeProfiles(saved, profile.story_id, profile.timeline_id)[key],
+        profile: materializeProfiles(saved, profile.library_id)[key],
         message: `${profile.character}的画像已保存。`,
       });
     } catch (error) {
@@ -304,12 +465,13 @@ async function init(router) {
   router.post("/profile/release", async (req, res) => {
     try {
       const state = await store.read();
-      const key = profileKey(req.body?.storyId, req.body?.timelineId, req.body?.character);
+      const libraryId = text(req.body?.libraryId, 200);
+      const key = profileKey(libraryId, req.body?.character);
       delete state.profileOverrides[key];
       const saved = await store.replace(state, `profile-release-${text(req.body?.character, 100)}`);
       res.json({
         success: true,
-        profile: materializeProfiles(saved, req.body?.storyId, req.body?.timelineId)[key] ?? null,
+        profile: materializeProfiles(saved, libraryId)[key] ?? null,
         message: "已移除人工覆盖，恢复采用模型生成的画像。",
       });
     } catch (error) {
@@ -324,14 +486,12 @@ async function init(router) {
       const previous = req.body?.previous;
       if (previous?.from && previous?.to) {
         const oldKey = relationKey(
-          previous.story_id,
-          previous.timeline_id,
+          previous.library_id,
           previous.from,
           previous.to,
         );
         const newKey = relationKey(
-          relation.story_id,
-          relation.timeline_id,
+          relation.library_id,
           relation.from,
           relation.to,
         );
@@ -345,8 +505,7 @@ async function init(router) {
         }
       }
       const key = relationKey(
-        relation.story_id,
-        relation.timeline_id,
+        relation.library_id,
         relation.from,
         relation.to,
       );
@@ -363,8 +522,7 @@ async function init(router) {
       const state = await store.read();
       const relation = relationFromRequest(req.body?.relation);
       const key = relationKey(
-        relation.story_id,
-        relation.timeline_id,
+        relation.library_id,
         relation.from,
         relation.to,
       );
@@ -382,16 +540,15 @@ async function init(router) {
 
   router.post("/graph/position", async (req, res) => {
     try {
-      const storyId = text(req.body?.storyId, 200);
-      const timelineId = text(req.body?.timelineId, 200);
+      const libraryId = text(req.body?.libraryId, 200);
       const character = text(req.body?.character, 200);
       const x = Number(req.body?.x);
       const y = Number(req.body?.y);
-      if (!storyId || !timelineId || !character || !Number.isFinite(x) || !Number.isFinite(y)) {
+      if (!libraryId || !character || !Number.isFinite(x) || !Number.isFinite(y)) {
         throw new Error("关系图坐标不完整。");
       }
       const state = await store.read();
-      const key = profileKey(storyId, timelineId, character);
+      const key = profileKey(libraryId, character);
       state.graphPositions[key] = { x: Math.round(x), y: Math.round(y) };
       await store.replace(state, `graph-${character}`, false);
       res.json({ success: true });
@@ -402,9 +559,8 @@ async function init(router) {
 
   router.post("/graph/reset", async (req, res) => {
     try {
-      const storyId = text(req.body?.storyId, 200);
-      const timelineId = text(req.body?.timelineId, 200);
-      const prefix = `${profileKey(storyId, timelineId, "").replace(/unknown$/, "")}`;
+      const libraryId = text(req.body?.libraryId, 200);
+      const prefix = `${profileKey(libraryId, "").replace(/unknown$/, "")}`;
       const state = await store.read();
       for (const key of Object.keys(state.graphPositions)) {
         if (key.startsWith(prefix)) delete state.graphPositions[key];
@@ -419,7 +575,16 @@ async function init(router) {
   router.post("/recall", async (req, res) => {
     try {
       const state = await store.read();
-      res.json({ success: true, result: recall(state, req.body ?? {}) });
+      const cardKey = text(req.body?.cardKey, 500);
+      const chatKey = text(req.body?.chatKey, 500);
+      const binding = resolveLibrary(state, cardKey, chatKey);
+      res.json({
+        success: true,
+        result: {
+          ...recall(state, { ...(req.body ?? {}), libraryId: binding.libraryId }),
+          binding: { mode: binding.mode, libraryId: binding.libraryId, library: binding.library },
+        },
+      });
     } catch (error) {
       errorResponse(res, error);
     }
@@ -448,10 +613,19 @@ async function init(router) {
 
   router.post("/analysis/start", async (req, res) => {
     try {
+      const state = await store.read();
+      const cardKey = text(req.body?.cardKey, 500);
+      const chatKey = text(req.body?.chatKey, 500);
+      const binding = resolveLibrary(state, cardKey, chatKey);
+      if (!binding.libraryId) {
+        throw new Error("当前聊天尚未绑定人物档案库，请先在工作台顶部选择或创建档案库。");
+      }
       const payload = {
-        storyId: text(req.body?.storyId, 200),
-        timelineId: text(req.body?.timelineId, 200),
-        chatKey: text(req.body?.chatKey, 500),
+        libraryId: binding.libraryId,
+        libraryName: binding.library.name,
+        libraryDescription: binding.library.description,
+        cardKey,
+        chatKey,
         chatTitle: text(req.body?.chatTitle, 500),
         startFloor: Math.max(0, Number(req.body?.startFloor ?? 0)),
         endFloor: Math.max(0, Number(req.body?.endFloor ?? 0)),
@@ -467,8 +641,8 @@ async function init(router) {
           }))
           : [],
       };
-      if (!payload.storyId || !payload.timelineId || !payload.chatKey) {
-        throw new Error("人物分析缺少故事、时间线或聊天标识。");
+      if (!payload.chatKey) {
+        throw new Error("人物分析缺少聊天标识。");
       }
       if (payload.endFloor < payload.startFloor) {
         throw new Error("终点楼层不能小于起始楼层。");
@@ -479,7 +653,7 @@ async function init(router) {
       payload.messages = selected;
       const job = startAnalysisJob(
         payload,
-        await store.read(),
+        state,
         await analysisConfigStore.read(),
       );
       res.status(202).json({ success: true, job: publicJob(job) });
@@ -514,8 +688,7 @@ async function init(router) {
         batchId,
         rangeKey: `${job.payload.chatKey}:${job.payload.startFloor}-${job.payload.endFloor}`,
         runId: job.id,
-        storyId: job.payload.storyId,
-        timelineId: job.payload.timelineId,
+        libraryId: job.payload.libraryId,
         chatKey: job.payload.chatKey,
         fileName: job.payload.chatTitle || job.payload.chatKey,
         range: `${job.payload.startFloor}-${job.payload.endFloor}`,
@@ -528,16 +701,14 @@ async function init(router) {
         previousRuns: [],
         result: job.result.result,
       };
-      const key = progressKey(job.payload.storyId, job.payload.timelineId, job.payload.chatKey);
+      const key = progressKey(job.payload.libraryId, job.payload.chatKey);
       const committed = analysisBatches(
         state,
-        job.payload.storyId,
-        job.payload.timelineId,
+        job.payload.libraryId,
         job.payload.chatKey,
       ).filter((batch) => batch.status === "committed");
       state.analysisProgress[key] = {
-        storyId: job.payload.storyId,
-        timelineId: job.payload.timelineId,
+        libraryId: job.payload.libraryId,
         chatKey: job.payload.chatKey,
         chatTitle: job.payload.chatTitle,
         processedThrough: contiguousProcessedThrough(committed),
@@ -571,11 +742,10 @@ async function init(router) {
       batch.revertedAt = new Date().toISOString();
       const remaining = analysisBatches(
         state,
-        batch.storyId,
-        batch.timelineId,
+        batch.libraryId,
         batch.chatKey,
       ).filter((item) => item.status === "committed" && item.batchId !== batchId);
-      const key = progressKey(batch.storyId, batch.timelineId, batch.chatKey);
+      const key = progressKey(batch.libraryId, batch.chatKey);
       state.analysisProgress[key] = {
         ...(state.analysisProgress[key] ?? {}),
         processedThrough: contiguousProcessedThrough(remaining),

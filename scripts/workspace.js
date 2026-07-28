@@ -18,8 +18,8 @@ function normalizeId(value) {
     .replace(/^_+|_+$/g, "") || "unknown";
 }
 
-function profileKey(storyId, timelineId, character) {
-  return `${normalizeId(storyId)}::${normalizeId(timelineId)}::${normalizeId(character)}`;
+function profileKey(libraryId, character) {
+  return `${normalizeId(libraryId)}::${normalizeId(character)}`;
 }
 
 function downloadJson(fileName, value) {
@@ -159,6 +159,24 @@ export function initCharacterWorkspace(deps) {
     return deps.settings();
   }
 
+  function activeLibraryId() {
+    return state.workspace?.binding?.libraryId || "";
+  }
+
+  function selectedLibraryId() {
+    return document.querySelector("#ccm-library-select")?.value || activeLibraryId();
+  }
+
+  function currentContextPayload() {
+    const snapshot = deps.getChatSnapshot();
+    return {
+      cardKey: snapshot.cardKey,
+      cardName: snapshot.cardName,
+      chatKey: snapshot.chatKey,
+      chatTitle: snapshot.chatTitle,
+    };
+  }
+
   function close() {
     overlay.classList.add("ccm-hidden");
     overlay.setAttribute("aria-hidden", "true");
@@ -179,10 +197,12 @@ export function initCharacterWorkspace(deps) {
     state.error = "";
     render();
     try {
+      const snapshot = deps.getChatSnapshot();
       const response = await deps.callBackend("/workspace", {
-        storyId: cfg().storyId,
-        timelineId: cfg().timelineId,
-        chatKey: deps.getChatSnapshot().chatKey,
+        cardKey: snapshot.cardKey,
+        cardName: snapshot.cardName,
+        chatKey: snapshot.chatKey,
+        chatTitle: snapshot.chatTitle,
       });
       state.workspace = response.workspace;
       if (!state.analysisConfig) {
@@ -208,9 +228,37 @@ export function initCharacterWorkspace(deps) {
       ? `${Object.keys(state.workspace.profiles).length} 人物 · ${state.workspace.milestones.length} 里程碑 · ` +
         `${Object.keys(state.workspace.relations).length} 条关系`
       : "等待读取人物资料";
+    const workspace = state.workspace;
+    const binding = workspace?.binding ?? { mode: "unbound", libraryId: "" };
+    const bindingLabel = {
+      chat: "当前聊天单独绑定",
+      card: "继承角色卡默认",
+      unbound: "尚未绑定",
+    }[binding.mode] ?? "尚未绑定";
+    const libraries = workspace?.libraries ?? [];
     target.innerHTML = `
-      <div><span>当前故事</span><b>${escapeHtml(cfg().storyId)}</b></div>
-      <div><span>时间线</span><b>${escapeHtml(cfg().timelineId)}</b></div>
+      <div class="ccm-context-card"><span>当前角色卡</span><b>${escapeHtml(workspace?.context?.cardName || "未识别")}</b></div>
+      <div class="ccm-context-card"><span>当前聊天</span><b>${escapeHtml(workspace?.context?.chatTitle || "未识别")}</b></div>
+      <div class="ccm-context-card"><span>当前档案库</span><b>${escapeHtml(binding.library?.name || "未绑定")}</b>
+        <small class="ccm-binding-mode ${escapeHtml(binding.mode)}">${escapeHtml(bindingLabel)}</small></div>
+      <div class="ccm-library-binding">
+        <select id="ccm-library-select" aria-label="选择人物档案库">
+          <option value="">选择档案库……</option>
+          ${libraries.map((library) => `<option value="${escapeHtml(library.id)}"
+            ${library.id === binding.libraryId ? "selected" : ""}>${escapeHtml(library.name)}</option>`).join("")}
+        </select>
+        <button type="button" data-action="bind-chat"><i class="fa-solid fa-link"></i> 绑定当前聊天</button>
+        <button type="button" data-action="set-card-default"><i class="fa-solid fa-id-card"></i> 设为角色卡默认</button>
+        <button type="button" data-action="create-library"><i class="fa-solid fa-plus"></i> 新建</button>
+        <button type="button" data-action="clone-library" ${binding.libraryId ? "" : "disabled"}>
+          <i class="fa-solid fa-copy"></i> 克隆当前库</button>
+        <button type="button" data-action="edit-library" ${binding.libraryId ? "" : "disabled"}>
+          <i class="fa-solid fa-pen"></i> 编辑库</button>
+        ${binding.mode === "chat" ? `<button type="button" data-action="unbind-chat">
+          <i class="fa-solid fa-link-slash"></i> 解绑当前聊天</button>` : ""}
+        ${workspace?.cardDefaultLibraryId ? `<button type="button" data-action="unset-card-default">
+          <i class="fa-solid fa-ban"></i> 取消角色卡默认</button>` : ""}
+      </div>
       <div class="ccm-meta-count"><span>资料概况</span><b>${escapeHtml(counts)}</b></div>`;
   }
 
@@ -224,6 +272,16 @@ export function initCharacterWorkspace(deps) {
       view.innerHTML = `<div class="ccm-empty error"><i class="fa-solid fa-triangle-exclamation"></i>
         <h3>人物资料暂时打不开</h3><p>${escapeHtml(state.error)}</p>
         <button class="ccm-primary" data-action="reload">重新连接</button></div>`;
+      return;
+    }
+    if (!activeLibraryId() && state.activeTab !== "settings") {
+      view.innerHTML = `<div class="ccm-empty ccm-unbound">
+        <i class="fa-solid fa-box-archive"></i>
+        <h3>当前聊天还没有人物档案库</h3>
+        <p>在顶部选择已有档案库并绑定，或新建一套。未绑定期间不会分析、写入或注入人物资料。</p>
+        <button type="button" class="ccm-primary" data-action="create-library">
+          <i class="fa-solid fa-plus"></i> 新建档案库</button>
+      </div>`;
       return;
     }
     const renderer = {
@@ -456,7 +514,7 @@ export function initCharacterWorkspace(deps) {
     const edges = allEdges.filter((edge) => visibleSet.has(edge.from) && visibleSet.has(edge.to));
     const positions = defaultPositions(visibleNames, edges);
     visibleNames.forEach((name) => {
-      const saved = state.positions[profileKey(cfg().storyId, cfg().timelineId, name)];
+      const saved = state.positions[profileKey(state.workspace?.binding?.libraryId, name)];
       if (saved) positions[name] = saved;
     });
     return { profiles, allNames, visibleNames, edges, positions };
@@ -559,12 +617,12 @@ export function initCharacterWorkspace(deps) {
           openProfileEditorByName(element.dataset.name);
           return;
         }
-        const key = profileKey(cfg().storyId, cfg().timelineId, element.dataset.name);
+        const libraryId = state.workspace?.binding?.libraryId;
+        const key = profileKey(libraryId, element.dataset.name);
         state.positions[key] = finished.position;
         try {
           await deps.callBackend("/graph/position", {
-            storyId: cfg().storyId,
-            timelineId: cfg().timelineId,
+            libraryId,
             character: element.dataset.name,
             ...finished.position,
           });
@@ -605,8 +663,6 @@ export function initCharacterWorkspace(deps) {
         <label class="ccm-switch-row"><div><b>生成前自动召回</b><span>根据最近消息识别人物并注入相关资料</span></div>
           <input id="ccm-ws-enabled" type="checkbox" ${current.enabled ? "checked" : ""}></label>
         <div class="ccm-settings-grid">
-          <label>故事<input id="ccm-ws-story" type="text" value="${escapeHtml(current.storyId)}"></label>
-          <label>时间线<input id="ccm-ws-timeline" type="text" value="${escapeHtml(current.timelineId)}"></label>
           <label>读取最近消息数<input id="ccm-ws-recent" type="number" min="1" max="30" value="${Number(current.recentMessages)}"></label>
           <label>最大注入字符<input id="ccm-ws-chars" type="number" min="500" max="20000" value="${Number(current.maxChars)}"></label>
           <label>画像上限<input id="ccm-ws-profiles" type="number" min="1" max="8" value="${Number(current.profileLimit)}"></label>
@@ -620,6 +676,79 @@ export function initCharacterWorkspace(deps) {
           <button data-action="export"><i class="fa-solid fa-box-archive"></i> 导出备份</button>
         </div>
       </div>`;
+  }
+
+  function libraryModal(mode = "create") {
+    const current = state.workspace?.binding?.library ?? null;
+    if ((mode === "clone" || mode === "edit") && !current) {
+      deps.notify("warning", "请先绑定一个档案库。");
+      return;
+    }
+    const title = mode === "clone" ? "克隆档案库" : mode === "edit" ? "编辑档案库" : "新建档案库";
+    const defaultName = mode === "clone"
+      ? `${current.name}（新世界线）`
+      : mode === "edit"
+        ? current.name
+        : `${state.workspace?.context?.cardName || "角色"}人物档案`;
+    const defaultDescription = mode === "edit" || mode === "clone" ? current.description || "" : "";
+    modalRoot.innerHTML = `<div class="ccm-modal-backdrop">
+      <form id="ccm-library-form" class="ccm-modal ccm-library-modal">
+        <header><div><span>MEMORY LIBRARY</span><h3>${title}</h3></div>
+          <button type="button" data-modal-close>×</button></header>
+        <p class="ccm-modal-note">${mode === "clone"
+          ? "会复制现有画像、成长历史和关系。复制后两套资料各自更新，适合平行世界或不同剧情线。"
+          : "档案库独立保存人物连续性，可同时绑定多个聊天。解绑聊天不会删除档案库。"}</p>
+        <div class="ccm-modal-grid">
+          <label class="wide">档案库名称<input name="name" maxlength="200"
+            value="${escapeHtml(defaultName)}" required></label>
+          <label class="wide">说明（可选）<textarea name="description"
+            placeholder="例如：恶役主线、现代 AU、二周目">${escapeHtml(defaultDescription)}</textarea></label>
+        </div>
+        <p id="ccm-library-error" class="ccm-form-error"></p>
+        <footer>
+          <button type="button" data-modal-close>取消</button>
+          <button type="submit" class="ccm-primary">${mode === "clone" ? "克隆并绑定" : "保存"}</button>
+        </footer>
+      </form></div>`;
+    modalRoot.querySelectorAll("[data-modal-close]").forEach((button) =>
+      button.addEventListener("click", () => { modalRoot.innerHTML = ""; }));
+    modalRoot.querySelector("#ccm-library-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const form = new FormData(event.currentTarget);
+      const name = String(form.get("name") || "").trim();
+      const description = String(form.get("description") || "").trim();
+      if (!name) {
+        modalRoot.querySelector("#ccm-library-error").textContent = "请给档案库起一个名字。";
+        return;
+      }
+      try {
+        if (mode === "edit") {
+          await deps.callBackend("/library/update", {
+            libraryId: current.id,
+            name,
+            description,
+          });
+        } else {
+          const response = await deps.callBackend(
+            mode === "clone" ? "/library/clone" : "/library/create",
+            mode === "clone"
+              ? { sourceLibraryId: current.id, name, description }
+              : { name, description },
+          );
+          await deps.callBackend("/binding/chat/set", {
+            ...currentContextPayload(),
+            libraryId: response.library.id,
+          });
+        }
+        deps.notify("success", mode === "clone"
+          ? "档案库已克隆并绑定到当前聊天。"
+          : mode === "edit" ? "档案库资料已保存。" : "档案库已创建并绑定到当前聊天。");
+        modalRoot.innerHTML = "";
+        await loadWorkspace();
+      } catch (error) {
+        modalRoot.querySelector("#ccm-library-error").textContent = error.message;
+      }
+    });
   }
 
   function profileModal(profile, isManual) {
@@ -679,8 +808,7 @@ export function initCharacterWorkspace(deps) {
     modalRoot.querySelector("[data-action='release-profile']")?.addEventListener("click", async () => {
       try {
         await deps.callBackend("/profile/release", {
-          storyId: profile.story_id,
-          timelineId: profile.timeline_id,
+          libraryId: profile.library_id,
           character: profile.character,
         });
         deps.notify("success", "已恢复模型生成版本。");
@@ -696,8 +824,7 @@ export function initCharacterWorkspace(deps) {
     const entry = Object.entries(state.workspace?.profiles ?? {})
       .find(([, profile]) => profile.character === name);
     const profile = entry?.[1] ?? {
-      story_id: cfg().storyId,
-      timeline_id: cfg().timelineId,
+      library_id: state.workspace?.binding?.libraryId,
       character: name,
       current_profile: { personality: "", behavior_pattern: "", core_need: "", current_stage: "" },
       growth_synopsis: "",
@@ -711,8 +838,7 @@ export function initCharacterWorkspace(deps) {
   function relationModal(edge = null) {
     const names = graphData().allNames;
     const draft = edge ?? {
-      story_id: cfg().storyId,
-      timeline_id: cfg().timelineId,
+      library_id: state.workspace?.binding?.libraryId,
       from: names[0] ?? "",
       to: names[1] ?? "",
       primary_type: "",
@@ -769,8 +895,7 @@ export function initCharacterWorkspace(deps) {
       }
       const relation = {
         ...draft,
-        story_id: cfg().storyId,
-        timeline_id: cfg().timelineId,
+        library_id: state.workspace?.binding?.libraryId,
         from,
         to,
         primary_type: form.get("primary_type"),
@@ -864,8 +989,7 @@ export function initCharacterWorkspace(deps) {
     const snapshot = deps.getChatSnapshot();
     try {
       const response = await deps.callBackend("/analysis/start", {
-        storyId: cfg().storyId,
-        timelineId: cfg().timelineId,
+        cardKey: snapshot.cardKey,
         chatKey: snapshot.chatKey,
         chatTitle: snapshot.chatTitle,
         startFloor: start,
@@ -902,10 +1026,12 @@ export function initCharacterWorkspace(deps) {
     if (snapshot.latestFloor < 0 || snapshot.messages.at(-1)?.is_user) return;
     try {
       const response = await deps.callBackend("/workspace", {
-        storyId: cfg().storyId,
-        timelineId: cfg().timelineId,
+        cardKey: snapshot.cardKey,
+        cardName: snapshot.cardName,
         chatKey: snapshot.chatKey,
+        chatTitle: snapshot.chatTitle,
       });
+      if (!response.workspace?.binding?.libraryId) return;
       const processed = Number(response.workspace?.progress?.processedThrough ?? -1);
       const interval = Math.max(2, Math.min(100, Number(cfg().analysisInterval ?? 10)));
       const start = processed + 1;
@@ -926,6 +1052,59 @@ export function initCharacterWorkspace(deps) {
 
   async function handleAction(action, button) {
     if (action === "reload") return loadWorkspace();
+    if (action === "create-library") return libraryModal("create");
+    if (action === "clone-library") return libraryModal("clone");
+    if (action === "edit-library") return libraryModal("edit");
+    if (action === "bind-chat") {
+      const libraryId = selectedLibraryId();
+      if (!libraryId) return deps.notify("warning", "请先从列表中选择一个档案库。");
+      try {
+        await deps.callBackend("/binding/chat/set", {
+          ...currentContextPayload(),
+          libraryId,
+        });
+        deps.notify("success", "当前聊天已单独绑定到所选档案库。");
+        await loadWorkspace();
+      } catch (error) {
+        deps.notify("error", error.message);
+      }
+      return;
+    }
+    if (action === "unbind-chat") {
+      try {
+        const response = await deps.callBackend("/binding/chat/unset", currentContextPayload());
+        deps.notify("success", response.message);
+        await loadWorkspace();
+      } catch (error) {
+        deps.notify("error", error.message);
+      }
+      return;
+    }
+    if (action === "set-card-default") {
+      const libraryId = selectedLibraryId();
+      if (!libraryId) return deps.notify("warning", "请先从列表中选择一个档案库。");
+      try {
+        await deps.callBackend("/binding/card/set", {
+          ...currentContextPayload(),
+          libraryId,
+        });
+        deps.notify("success", "之后这张角色卡的新聊天会默认使用所选档案库。");
+        await loadWorkspace();
+      } catch (error) {
+        deps.notify("error", error.message);
+      }
+      return;
+    }
+    if (action === "unset-card-default") {
+      try {
+        await deps.callBackend("/binding/card/unset", currentContextPayload());
+        deps.notify("success", "已取消这张角色卡的默认档案库。");
+        await loadWorkspace();
+      } catch (error) {
+        deps.notify("error", error.message);
+      }
+      return;
+    }
     if (action === "add-relation") return relationModal();
     if (action === "edit-profile") {
       const profile = state.workspace?.profiles?.[button.dataset.key];
@@ -942,7 +1121,7 @@ export function initCharacterWorkspace(deps) {
     }
     if (action === "reset-graph") {
       try {
-        await deps.callBackend("/graph/reset", { storyId: cfg().storyId, timelineId: cfg().timelineId });
+        await deps.callBackend("/graph/reset", { libraryId: state.workspace?.binding?.libraryId });
         state.positions = {};
         state.zoom = 1;
         renderRelations();
@@ -1057,8 +1236,6 @@ export function initCharacterWorkspace(deps) {
     if (action === "save-settings") {
       const values = {
         enabled: document.querySelector("#ccm-ws-enabled").checked,
-        storyId: document.querySelector("#ccm-ws-story").value.trim() || "默认故事",
-        timelineId: document.querySelector("#ccm-ws-timeline").value.trim() || "主线",
         recentMessages: Number(document.querySelector("#ccm-ws-recent").value),
         maxChars: Number(document.querySelector("#ccm-ws-chars").value),
         profileLimit: Number(document.querySelector("#ccm-ws-profiles").value),
@@ -1096,6 +1273,10 @@ export function initCharacterWorkspace(deps) {
   }
 
   view.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-action]");
+    if (button) handleAction(button.dataset.action, button);
+  });
+  document.querySelector("#ccm-workspace-meta").addEventListener("click", (event) => {
     const button = event.target.closest("[data-action]");
     if (button) handleAction(button.dataset.action, button);
   });
