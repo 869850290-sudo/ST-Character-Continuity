@@ -246,7 +246,7 @@ async function init(router) {
       const state = await store.read();
       res.json({
         success: true,
-        version: "0.4.7",
+        version: "0.4.8",
         stateVersion: state.version,
         batches: Object.keys(state.batches).length,
       });
@@ -457,6 +457,7 @@ async function init(router) {
           profile.library_id,
           previousCharacter,
           profile.character,
+          { mergeDuplicate: true },
         );
       }
       const key = profileKey(profile.library_id, profile.character);
