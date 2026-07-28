@@ -1,6 +1,6 @@
 const GRAPH_WIDTH = 1000;
 const GRAPH_HEIGHT = 660;
-const FRONTEND_VERSION = "0.4.3";
+const FRONTEND_VERSION = "0.4.4";
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -152,6 +152,9 @@ export function initCharacterWorkspace(deps) {
     analysisConfig: null,
     analysisJob: null,
     analysisPreview: null,
+    analysisRangeChatKey: "",
+    analysisRangeStart: "",
+    analysisRangeEnd: "",
     analysisBusy: false,
     analysisNotice: null,
     autoRetryAfter: 0,
@@ -355,6 +358,11 @@ export function initCharacterWorkspace(deps) {
     const suggestedStart = processed >= snapshot.latestFloor
       ? Math.max(0, snapshot.latestFloor - 9)
       : processed + 1;
+    if (state.analysisRangeChatKey !== snapshot.chatKey) {
+      state.analysisRangeChatKey = snapshot.chatKey;
+      state.analysisRangeStart = String(suggestedStart);
+      state.analysisRangeEnd = String(snapshot.latestFloor);
+    }
     const current = state.analysisConfig ?? {};
     const running = state.analysisJob?.status === "running";
     const batches = state.workspace?.batches ?? [];
@@ -391,9 +399,9 @@ export function initCharacterWorkspace(deps) {
         <header><div><span>MANUAL RUN</span><h3>手动分析楼层</h3></div></header>
         <div class="ccm-range-controls">
           <label>起始楼层<input id="ccm-analysis-start" type="number" min="0"
-            max="${Math.max(0, snapshot.latestFloor)}" value="${suggestedStart}"></label>
+            max="${Math.max(0, snapshot.latestFloor)}" value="${escapeHtml(state.analysisRangeStart)}"></label>
           <label>终点楼层<input id="ccm-analysis-end" type="number" min="0"
-            max="${Math.max(0, snapshot.latestFloor)}" value="${snapshot.latestFloor}"></label>
+            max="${Math.max(0, snapshot.latestFloor)}" value="${escapeHtml(state.analysisRangeEnd)}"></label>
           <button type="button" data-action="preview-range"><i class="fa-solid fa-eye"></i> 预览范围</button>
           <button type="button" data-action="run-analysis" class="ccm-primary" ${running ? "disabled" : ""}>
             <i class="fa-solid ${running ? "fa-circle-notch fa-spin" : "fa-play"}"></i>
@@ -948,12 +956,30 @@ export function initCharacterWorkspace(deps) {
     if (snapshot.latestFloor < 0 || !snapshot.messages.length) {
       throw new Error("当前没有可分析的聊天楼层，请先打开一份聊天记录。");
     }
-    const start = Math.max(0, Number(document.querySelector("#ccm-analysis-start")?.value ?? 0));
-    const end = Math.min(
-      snapshot.latestFloor,
-      Number(document.querySelector("#ccm-analysis-end")?.value ?? snapshot.latestFloor),
-    );
+    const startInput = document.querySelector("#ccm-analysis-start");
+    const endInput = document.querySelector("#ccm-analysis-end");
+    const startRaw = String(startInput?.value ?? state.analysisRangeStart).trim();
+    const endRaw = String(endInput?.value ?? state.analysisRangeEnd).trim();
+    if (!startRaw || !endRaw) throw new Error("请填写起始楼层和终点楼层。");
+    const start = Number(startRaw);
+    const end = Number(endRaw);
+    if (!Number.isInteger(start) || !Number.isInteger(end)) {
+      throw new Error("楼层必须填写整数。");
+    }
+    if (start < 0 || end > snapshot.latestFloor) {
+      throw new Error(`楼层范围必须在 0-${snapshot.latestFloor} 之间。`);
+    }
     if (end < start) throw new Error("终点楼层不能小于起始楼层。");
+    const selected = snapshot.messages.filter((message) =>
+      message.floor >= start && message.floor <= end);
+    if (!selected.length) {
+      const floors = snapshot.messages.map((message) => message.floor);
+      throw new Error(
+        `选择的 ${start}-${end} 楼没有聊天内容；当前消息分布在 ${Math.min(...floors)}-${Math.max(...floors)} 楼。`,
+      );
+    }
+    state.analysisRangeStart = String(start);
+    state.analysisRangeEnd = String(end);
     return { snapshot, start, end };
   }
 
@@ -971,7 +997,7 @@ export function initCharacterWorkspace(deps) {
     const { snapshot, start, end } = rangeValues();
     const selected = snapshot.messages.filter((message) =>
       message.floor >= start && message.floor <= end);
-    modalRoot.innerHTML = `<div class="ccm-modal-backdrop">
+    modalRoot.innerHTML = `<dialog id="ccm-range-dialog" class="ccm-native-dialog">
       <div class="ccm-modal ccm-range-modal">
         <header><div><span>RANGE PREVIEW</span><h3>${start}-${end} 楼 · ${selected.length} 条消息</h3></div>
           <button type="button" data-modal-close>×</button></header>
@@ -980,9 +1006,20 @@ export function initCharacterWorkspace(deps) {
           <article><b>#${message.floor} · ${escapeHtml(message.is_user ? "用户" : message.name || "角色")}</b>
             <p>${escapeHtml(String(message.mes).slice(0, 500))}</p></article>`).join("")}</div>
         <footer><button type="button" data-modal-close>关闭</button></footer>
-      </div></div>`;
+      </div></dialog>`;
+    const dialog = modalRoot.querySelector("#ccm-range-dialog");
+    const closeRangePreview = () => {
+      if (dialog.open) dialog.close();
+      modalRoot.innerHTML = "";
+    };
     modalRoot.querySelectorAll("[data-modal-close]").forEach((button) =>
-      button.addEventListener("click", () => { modalRoot.innerHTML = ""; }));
+      button.addEventListener("click", closeRangePreview));
+    dialog.addEventListener("cancel", (event) => {
+      event.preventDefault();
+      closeRangePreview();
+    });
+    if (typeof dialog.showModal === "function") dialog.showModal();
+    else dialog.setAttribute("open", "");
   }
 
   async function pollAnalysisJob(jobId) {
@@ -1317,6 +1354,14 @@ export function initCharacterWorkspace(deps) {
     if (event.target.id === "ccm-graph-focus") {
       state.focus = event.target.value;
       renderRelations();
+    }
+  });
+  view.addEventListener("input", (event) => {
+    if (event.target.id === "ccm-analysis-start") {
+      state.analysisRangeStart = event.target.value;
+    }
+    if (event.target.id === "ccm-analysis-end") {
+      state.analysisRangeEnd = event.target.value;
     }
   });
 
