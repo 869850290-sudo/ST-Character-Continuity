@@ -2,7 +2,7 @@
 
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const { recall } = require("../server/recall.cjs");
+const { estimateTokens, recall } = require("../server/recall.cjs");
 const { materializeProfiles, materializeRelationships } = require("../server/state.cjs");
 
 const LIBRARY_ID = "library-main";
@@ -180,4 +180,105 @@ test("停用的人工关系不会出现在图谱物化结果中", () => {
   };
   const relations = materializeRelationships(memory, LIBRARY_ID);
   assert.equal(relations[`${LIBRARY_ID}::傅远平→fi`], undefined);
+});
+
+test("召回按真实基础上下文动态计算 token 预算", () => {
+  const roomy = recall(state(), {
+    libraryId: LIBRARY_ID,
+    text: "傅远平问Fi明天是不是要去见牧知傲。",
+    candidateCharacters: ["Fi"],
+    baseContextTokens: 22000,
+    attentionCeilingTokens: 36000,
+    recallMaxTokens: 5000,
+    safetyReserveTokens: 4000,
+    contextSizeExact: true,
+  });
+  assert.equal(roomy.stats.tokenBudget, 5000);
+  assert.equal(roomy.stats.contextSizeExact, true);
+  assert.ok(roomy.stats.estimatedTokens <= roomy.stats.tokenBudget);
+  assert.equal(
+    roomy.stats.projectedInputTokens,
+    roomy.stats.baseContextTokens + roomy.stats.estimatedTokens,
+  );
+
+  const tight = recall(state(), {
+    libraryId: LIBRARY_ID,
+    text: "傅远平问Fi。",
+    baseContextTokens: 30500,
+    attentionCeilingTokens: 36000,
+    recallMaxTokens: 5000,
+    safetyReserveTokens: 4000,
+  });
+  assert.equal(tight.stats.tokenBudget, 1500);
+  assert.equal(tight.stats.mode, "layered");
+  assert.ok(tight.stats.estimatedTokens <= 1500);
+
+  const blocked = recall(state(), {
+    libraryId: LIBRARY_ID,
+    text: "傅远平问Fi。",
+    baseContextTokens: 33000,
+    attentionCeilingTokens: 36000,
+    recallMaxTokens: 5000,
+    safetyReserveTokens: 4000,
+  });
+  assert.equal(blocked.stats.mode, "blocked");
+  assert.equal(blocked.injection, "");
+});
+
+test("详细档案保留与当前正文最相关的后段行为细节", () => {
+  const memory = state();
+  const profile = memory.baseProfiles[`${LIBRARY_ID}::傅远平`];
+  profile.current_profile.personality = [
+    "他通常保持礼貌。",
+    ..."一二三四五六七八九十".split("").map((item) => `无关背景${item}保持稳定。`),
+    "面对谈判时，他会故意让对手先表态，从而观察对方暴露的底牌。",
+  ].join("");
+  memory.batches.a.result.profile_updates[0].proposed_profile.current_profile.personality =
+    profile.current_profile.personality;
+  const result = recall(memory, {
+    libraryId: LIBRARY_ID,
+    text: "傅远平让对手先表态，等对方暴露底牌。",
+    baseContextTokens: 30000,
+    attentionCeilingTokens: 36000,
+    recallMaxTokens: 5000,
+    safetyReserveTokens: 4000,
+  });
+  assert.match(result.injection, /让对手先表态/);
+  assert.ok(estimateTokens(result.injection) <= result.stats.tokenBudget);
+  assert.doesNotMatch(result.injection, /成长脉络：傅远平逐渐把控制改造成协商/);
+});
+
+test("不同可用预算下召回都不会突破自己的 token 硬上限", () => {
+  for (const baseContextTokens of [22000, 27000, 29000, 30000, 30500, 31000, 32000]) {
+    const result = recall(state(), {
+      libraryId: LIBRARY_ID,
+      text: "傅远平、牧知傲和Fi正在讨论下一步安排。",
+      candidateCharacters: ["Fi"],
+      baseContextTokens,
+      attentionCeilingTokens: 36000,
+      recallMaxTokens: 5000,
+      safetyReserveTokens: 4000,
+    });
+    assert.ok(
+      result.stats.estimatedTokens <= result.stats.tokenBudget,
+      `${baseContextTokens} 基础 tokens 时召回超过预算`,
+    );
+    assert.ok(
+      result.stats.projectedInputTokens <= 32000,
+      `${baseContextTokens} 基础 tokens 时没有保留 4000 安全余量`,
+    );
+  }
+});
+
+test("画像字段中的重复描述不会被反复注入", () => {
+  const memory = state();
+  const repeated = "遇到压力时先观察局势，再通过具体行动控制风险。";
+  memory.batches.a.result.profile_updates[0].proposed_profile.current_profile.personality = repeated;
+  memory.batches.a.result.profile_updates[0].proposed_profile.current_profile.behavior_pattern = repeated;
+  const result = recall(memory, {
+    libraryId: LIBRARY_ID,
+    text: "傅远平正在观察局势。",
+    baseContextTokens: 22000,
+  });
+  assert.equal(result.injection.match(/遇到压力时先观察局势/g)?.length, 1);
 });

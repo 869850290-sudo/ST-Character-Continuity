@@ -1,8 +1,8 @@
-import { initCharacterWorkspace } from "./scripts/workspace.js?v=0.5.1";
+import { initCharacterWorkspace } from "./scripts/workspace.js?v=0.5.2";
 
 const MODULE_NAME = "character_continuity";
 const API_ROOT = "/api/plugins/character-continuity";
-const FRONTEND_VERSION = "0.5.1";
+const FRONTEND_VERSION = "0.5.2";
 
 const DEFAULT_SETTINGS = Object.freeze({
   enabled: false,
@@ -11,6 +11,9 @@ const DEFAULT_SETTINGS = Object.freeze({
   milestoneLimit: 6,
   relationLimit: 8,
   maxChars: 6000,
+  attentionCeilingTokens: 36000,
+  recallMaxTokens: 5000,
+  safetyReserveTokens: 4000,
   includeQuiet: false,
   showToastOnRecall: false,
   analysisAutoEnabled: false,
@@ -77,6 +80,29 @@ function isContinuityInjection(message) {
   return message?.extra?.type === "character_continuity_injection";
 }
 
+function estimateTextTokens(value) {
+  const text = String(value ?? "");
+  const han = text.match(/\p{Script=Han}/gu)?.length ?? 0;
+  const kanaHangul = text.match(/[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/gu)?.length ?? 0;
+  const withoutCjk = text.replace(
+    /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/gu,
+    " ",
+  );
+  const words = withoutCjk.match(/[\p{L}\p{N}]+/gu) ?? [];
+  const punctuation = withoutCjk.replace(/[\p{L}\p{N}\s]/gu, "").length;
+  return Math.ceil(
+    han * 1.15
+    + kanaHangul * 1.1
+    + words.reduce((sum, word) => sum + Math.max(1, word.length / 3.5), 0)
+    + punctuation / 3,
+  );
+}
+
+function estimateChatTokens(chat) {
+  return (chat ?? []).reduce((sum, message) =>
+    sum + estimateTextTokens(messageText(message)) + 6, 0);
+}
+
 function currentChatSnapshot() {
   const ctx = context();
   const current = ctx.characters?.[ctx.characterId];
@@ -140,9 +166,11 @@ function candidateCharacters() {
   return [...candidates];
 }
 
-async function runRecall(chat = context().chat) {
+async function runRecall(chat = context().chat, contextSize = null) {
   const cfg = settings();
   const snapshot = currentChatSnapshot();
+  const exactContextSize = Number(contextSize);
+  const hasExactContextSize = Number.isFinite(exactContextSize) && exactContextSize >= 0;
   const response = await callBackend("/recall", {
     cardKey: snapshot.cardKey,
     chatKey: snapshot.chatKey,
@@ -152,6 +180,13 @@ async function runRecall(chat = context().chat) {
     milestoneLimit: cfg.milestoneLimit,
     relationLimit: cfg.relationLimit,
     maxChars: cfg.maxChars,
+    attentionCeilingTokens: cfg.attentionCeilingTokens,
+    recallMaxTokens: cfg.recallMaxTokens,
+    safetyReserveTokens: cfg.safetyReserveTokens,
+    baseContextTokens: hasExactContextSize
+      ? exactContextSize
+      : estimateChatTokens(chat),
+    contextSizeExact: hasExactContextSize,
   });
   lastRecall = response.result;
   workspace?.setRecall(lastRecall);
@@ -159,13 +194,13 @@ async function runRecall(chat = context().chat) {
   return response.result;
 }
 
-globalThis.characterContinuityInterceptor = async function (chat, _contextSize, _abort, type) {
+globalThis.characterContinuityInterceptor = async function (chat, contextSize, _abort, type) {
   const cfg = settings();
   if (!cfg.enabled) return;
   if (type === "quiet" && !cfg.includeQuiet) return;
 
   try {
-    const result = await runRecall(chat);
+    const result = await runRecall(chat, contextSize);
     if (!result.injection) return;
     const insertionIndex = Math.max(0, chat.length - 1);
     chat.splice(insertionIndex, 0, {
