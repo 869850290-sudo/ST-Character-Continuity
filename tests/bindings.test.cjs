@@ -260,3 +260,98 @@ test("人物改名会同步画像、成长记录、关系和人工配置", () =>
   assert.ok(renamed.graphPositions["shared::新名"]);
   assert.equal(renamed.batches["batch-1"].result.character_audit[0].character, "新名");
 });
+
+test("旧后端误建的同内容人物可在改名时安全合并", () => {
+  const state = normalizeState({
+    version: 3,
+    libraries: { shared: library("shared", "共享主线") },
+    baseProfiles: {
+      "shared::错误名字": {
+        library_id: "shared",
+        character: "错误名字",
+        current_profile: {
+          personality: "冷静",
+          behavior_pattern: "谨慎",
+          core_need: "安全",
+          current_stage: "观察期",
+        },
+        growth_synopsis: "同一份成长记录",
+        residual_patterns: [],
+        active_milestone_ids: [],
+      },
+    },
+    profileOverrides: {
+      "shared::正确名字": {
+        library_id: "shared",
+        character: "正确名字",
+        current_profile: {
+          personality: "冷静",
+          behavior_pattern: "谨慎",
+          core_need: "安全",
+          current_stage: "观察期",
+        },
+        growth_synopsis: "同一份成长记录",
+        residual_patterns: [],
+        active_milestone_ids: [],
+        active: true,
+        last_batch_id: "manual",
+      },
+    },
+    baseRelations: {
+      "shared::错误名字→同伴": {
+        library_id: "shared",
+        from: "错误名字",
+        to: "同伴",
+        active: true,
+      },
+    },
+  });
+
+  assert.throws(
+    () => renameCharacter(state, "shared", "错误名字", "正确名字"),
+    /已经存在/,
+  );
+
+  const repaired = renameCharacter(
+    state,
+    "shared",
+    "错误名字",
+    "正确名字",
+    { mergeDuplicate: true },
+  );
+  const profiles = Object.values(materializeProfiles(repaired, "shared"));
+  const relations = Object.values(materializeRelationships(repaired, "shared"));
+
+  assert.equal(profiles.length, 1);
+  assert.equal(profiles[0].character, "正确名字");
+  assert.equal(relations.length, 1);
+  assert.equal(relations[0].from, "正确名字");
+  assert.equal(repaired.profileOverrides["shared::错误名字"], undefined);
+});
+
+test("同名目标有独立内容时不会被自动合并", () => {
+  const state = normalizeState({
+    version: 3,
+    libraries: { shared: library("shared", "共享主线") },
+    baseProfiles: {
+      "shared::甲": {
+        library_id: "shared",
+        character: "甲",
+        current_profile: { personality: "冷静" },
+      },
+    },
+    profileOverrides: {
+      "shared::乙": {
+        library_id: "shared",
+        character: "乙",
+        current_profile: { personality: "热情" },
+        active: true,
+      },
+    },
+  });
+
+  assert.throws(
+    () => renameCharacter(state, "shared", "甲", "乙", { mergeDuplicate: true }),
+    /已经存在/,
+  );
+});

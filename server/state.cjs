@@ -380,7 +380,59 @@ function materializeRelationships(stateInput, libraryId) {
   );
 }
 
-function renameCharacter(stateInput, libraryIdInput, previousNameInput, nextNameInput) {
+function comparableProfile(profile) {
+  return {
+    current_profile: {
+      personality: String(profile?.current_profile?.personality ?? ""),
+      behavior_pattern: String(profile?.current_profile?.behavior_pattern ?? ""),
+      core_need: String(profile?.current_profile?.core_need ?? ""),
+      current_stage: String(profile?.current_profile?.current_stage ?? ""),
+    },
+    growth_synopsis: String(profile?.growth_synopsis ?? ""),
+    residual_patterns: clone(profile?.residual_patterns ?? []),
+    active_milestone_ids: [...(profile?.active_milestone_ids ?? [])].map(String).sort(),
+  };
+}
+
+function isLegacyRenameDuplicate(state, libraryId, nextName, previousKey, nextKey) {
+  const nextOverride = state.profileOverrides[nextKey];
+  if (!nextOverride || state.baseProfiles[nextKey]) return false;
+
+  for (const batch of Object.values(state.batches)) {
+    if (batch?.libraryId !== libraryId) continue;
+    if ((batch.result?.profile_updates ?? []).some((update) => update.character === nextName)) {
+      return false;
+    }
+    if ((batch.result?.relation_changes ?? []).some(
+      (edge) => edge.from === nextName || edge.to === nextName,
+    )) {
+      return false;
+    }
+  }
+  for (const mapName of ["baseRelations", "relationOverrides"]) {
+    if (Object.values(state[mapName]).some(
+      (edge) => edge?.library_id === libraryId
+        && (edge.from === nextName || edge.to === nextName),
+    )) {
+      return false;
+    }
+  }
+
+  const profiles = materializeProfiles(state, libraryId);
+  const previousProfile = profiles[previousKey];
+  const nextProfile = profiles[nextKey];
+  return Boolean(previousProfile && nextProfile)
+    && JSON.stringify(comparableProfile(previousProfile))
+      === JSON.stringify(comparableProfile(nextProfile));
+}
+
+function renameCharacter(
+  stateInput,
+  libraryIdInput,
+  previousNameInput,
+  nextNameInput,
+  options = {},
+) {
   const state = normalizeState(stateInput);
   const libraryId = String(libraryIdInput ?? "").trim();
   const previousName = String(previousNameInput ?? "").trim();
@@ -394,9 +446,14 @@ function renameCharacter(stateInput, libraryIdInput, previousNameInput, nextName
   const nextKey = profileKey(libraryId, nextName);
   const profiles = materializeProfiles(state, libraryId);
   if (!profiles[previousKey]) throw new Error(`找不到人物“${previousName}”。`);
-  if (previousKey !== nextKey && profiles[nextKey]) {
+  const mergingLegacyDuplicate = previousKey !== nextKey
+    && Boolean(profiles[nextKey])
+    && options.mergeDuplicate === true
+    && isLegacyRenameDuplicate(state, libraryId, nextName, previousKey, nextKey);
+  if (previousKey !== nextKey && profiles[nextKey] && !mergingLegacyDuplicate) {
     throw new Error(`人物“${nextName}”已经存在，请换一个名字。`);
   }
+  if (mergingLegacyDuplicate) delete state.profileOverrides[nextKey];
 
   const milestoneIdMap = new Map();
   for (const batch of Object.values(state.batches)) {
@@ -433,6 +490,10 @@ function renameCharacter(stateInput, libraryIdInput, previousNameInput, nextName
     const source = state[mapName];
     if (!Object.hasOwn(source, previousKey)) continue;
     if (previousKey !== nextKey && Object.hasOwn(source, nextKey)) {
+      if (mergingLegacyDuplicate && mapName === "graphPositions") {
+        delete source[previousKey];
+        continue;
+      }
       throw new Error(`人物“${nextName}”已有独立配置，无法安全合并。`);
     }
     source[nextKey] = source[previousKey];
