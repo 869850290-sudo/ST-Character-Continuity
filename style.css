@@ -11,6 +11,365 @@
   --ccm-red: #f26c78;
 }
 
+.ccm-analysis-progress {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.ccm-analysis-progress > div,
+.ccm-analysis-panel {
+  border: 1px solid var(--ccm-border);
+  border-radius: 14px;
+  background: linear-gradient(145deg, rgb(23 34 53 / 92%), rgb(13 20 32 / 96%));
+}
+
+.ccm-analysis-progress > div {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+  padding: 14px;
+}
+
+.ccm-analysis-progress span,
+.ccm-analysis-panel > header span,
+.ccm-analysis-result > header span {
+  color: var(--ccm-muted);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+}
+
+.ccm-analysis-progress b {
+  overflow: hidden;
+  font-size: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ccm-analysis-panel {
+  margin-bottom: 16px;
+  padding: 18px;
+}
+
+.ccm-analysis-panel > header,
+.ccm-analysis-result > header,
+.ccm-analysis-card > div,
+.ccm-batch-list article {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.ccm-analysis-panel h3,
+.ccm-analysis-result h3,
+.ccm-analysis-card h4 {
+  margin: 3px 0 0;
+}
+
+.ccm-analysis-panel > p,
+.ccm-clean-note,
+.ccm-muted {
+  color: var(--ccm-muted);
+  line-height: 1.6;
+}
+
+.ccm-switch {
+  position: relative;
+  width: 54px;
+  height: 30px;
+}
+
+.ccm-switch input {
+  position: absolute;
+  opacity: 0;
+}
+
+.ccm-switch span {
+  position: absolute;
+  inset: 0;
+  border: 1px solid var(--ccm-border);
+  border-radius: 30px;
+  background: #263247;
+  cursor: pointer;
+}
+
+.ccm-switch span::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 4px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #b8c3d3;
+  transition: 0.18s ease;
+}
+
+.ccm-switch input:checked + span {
+  background: var(--ccm-green);
+}
+
+.ccm-switch input:checked + span::after {
+  left: 27px;
+  background: white;
+}
+
+.ccm-analysis-controls,
+.ccm-range-controls,
+.ccm-model-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.ccm-range-controls {
+  grid-template-columns: 1fr 1fr auto auto;
+  align-items: end;
+}
+
+.ccm-analysis-controls label,
+.ccm-range-controls label,
+.ccm-model-grid label,
+.ccm-prompt-field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  color: var(--ccm-muted);
+  font-size: 13px;
+}
+
+.ccm-analysis-controls input,
+.ccm-range-controls input,
+.ccm-model-grid input,
+.ccm-model-grid select,
+.ccm-prompt-field textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid var(--ccm-border);
+  border-radius: 10px;
+  color: var(--ccm-text);
+  background: #0b111c;
+}
+
+.ccm-prompt-field {
+  margin-top: 14px;
+}
+
+.ccm-prompt-field textarea {
+  min-height: 310px;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.ccm-clean-note {
+  padding: 12px;
+  border: 1px dashed var(--ccm-border);
+  border-radius: 10px;
+  background: rgb(36 198 154 / 6%);
+  font-size: 12px;
+}
+
+.ccm-job-running {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 14px;
+  padding: 14px;
+  border-left: 3px solid var(--ccm-purple);
+  border-radius: 8px;
+  background: rgb(168 85 247 / 9%);
+}
+
+.ccm-job-running span {
+  color: var(--ccm-muted);
+  font-size: 12px;
+}
+
+.ccm-analysis-result {
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--ccm-border);
+}
+
+.ccm-analysis-counts {
+  display: flex;
+  gap: 10px;
+}
+
+.ccm-analysis-counts b {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  color: var(--ccm-green);
+  font-size: 22px;
+}
+
+.ccm-analysis-counts small {
+  color: var(--ccm-muted);
+  font-size: 10px;
+  font-weight: 400;
+}
+
+.ccm-audit-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin: 14px 0;
+}
+
+.ccm-audit-strip span {
+  padding: 5px 8px;
+  border: 1px solid var(--ccm-border);
+  border-radius: 999px;
+  color: var(--ccm-muted);
+  font-size: 11px;
+}
+
+.ccm-audit-strip .update {
+  border-color: rgb(36 198 154 / 45%);
+  color: var(--ccm-green);
+}
+
+.ccm-analysis-card {
+  margin: 10px 0;
+  padding: 14px;
+  border: 1px solid var(--ccm-border);
+  border-radius: 12px;
+  background: rgb(7 12 20 / 45%);
+}
+
+.ccm-analysis-card.relation {
+  border-left: 3px solid var(--ccm-purple);
+}
+
+.ccm-analysis-card p {
+  line-height: 1.6;
+}
+
+.ccm-analysis-card blockquote {
+  margin: 10px 0;
+  padding: 10px 12px;
+  border-left: 3px solid var(--ccm-gold);
+  color: #cbd5e4;
+  background: rgb(214 173 98 / 7%);
+}
+
+.ccm-analysis-sub {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--ccm-border);
+}
+
+.ccm-analysis-sub span {
+  display: block;
+  margin-top: 4px;
+}
+
+.ccm-analysis-result > footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.ccm-clean-preview pre,
+.ccm-range-list {
+  max-height: 380px;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
+.ccm-clean-preview {
+  margin-top: 12px;
+}
+
+.ccm-clean-preview pre {
+  padding: 12px;
+  border-radius: 8px;
+  background: #080d15;
+  font-size: 11px;
+}
+
+.ccm-batch-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.ccm-batch-list article {
+  padding: 11px 12px;
+  border: 1px solid var(--ccm-border);
+  border-radius: 9px;
+  background: rgb(7 12 20 / 45%);
+}
+
+.ccm-batch-list article > div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.ccm-batch-list article span,
+.ccm-batch-list article em {
+  color: var(--ccm-muted);
+  font-size: 11px;
+}
+
+.ccm-batch-list article.reverted {
+  opacity: 0.5;
+}
+
+.ccm-range-modal {
+  max-width: 760px;
+}
+
+.ccm-range-list article {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--ccm-border);
+}
+
+.ccm-range-list p {
+  margin: 5px 0 0;
+  color: var(--ccm-muted);
+  white-space: pre-wrap;
+}
+
+@media (max-width: 760px) {
+  .ccm-analysis-progress {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .ccm-analysis-controls,
+  .ccm-range-controls,
+  .ccm-model-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ccm-range-controls button,
+  .ccm-analysis-controls button {
+    width: 100%;
+  }
+
+  .ccm-analysis-panel {
+    padding: 14px;
+  }
+
+  .ccm-analysis-result > header,
+  .ccm-analysis-card > div,
+  .ccm-batch-list article {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
 .ccm-menu-icon {
   color: var(--ccm-gold);
   filter: drop-shadow(0 0 5px rgb(214 173 98 / 40%));

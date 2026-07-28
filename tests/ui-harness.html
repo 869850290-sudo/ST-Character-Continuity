@@ -79,6 +79,18 @@
       }],
       relations,
       graphPositions: {},
+      progress: {
+        processedThrough: 19,
+        sequence: 2,
+      },
+      batches: [{
+        batchId: "demo-1",
+        range: "10-19",
+        mode: "manual",
+        acceptedAt: "2026-07-28T23:40:00.000Z",
+        status: "committed",
+        result: { profile_updates: [{ decision: "update" }], relation_changes: [] },
+      }],
       counts: { batches: 2 },
     };
     const settings = {
@@ -90,6 +102,8 @@
       milestoneLimit: 6,
       relationLimit: 8,
       maxChars: 6000,
+      analysisAutoEnabled: false,
+      analysisInterval: 10,
     };
 
     const lab = initCharacterWorkspace({
@@ -98,7 +112,19 @@
       notify(type, message) { console.log(type, message); },
       async callBackend(endpoint) {
         if (endpoint === "/workspace") return { success: true, workspace };
-        if (endpoint === "/health") return { success: true, version: "0.2.0", batches: 2 };
+        if (endpoint === "/analysis/config/get") return {
+          success: true,
+          config: {
+            provider: "openai",
+            baseUrl: "https://api.deepseek.com/v1",
+            model: "deepseek-v4-pro",
+            thinkingMode: "fast",
+            timeoutMs: 600000,
+            prompt: "这是用于本地界面验证的群像人物连续性提示词。",
+            hasApiKey: true,
+          },
+        };
+        if (endpoint === "/health") return { success: true, version: "0.3.0", batches: 2 };
         if (endpoint === "/state/get") return { success: true, state: {} };
         return { success: true };
       },
@@ -110,6 +136,18 @@
         };
       },
       getLastRecall: () => null,
+      getChatSnapshot: () => ({
+        chatKey: "demo-chat",
+        chatTitle: "你是恶役 - 测试聊天",
+        latestFloor: 29,
+        priorityCharacters: ["傅远平", "牧知傲"],
+        messages: Array.from({ length: 30 }, (_, floor) => ({
+          floor,
+          is_user: floor % 2 === 1,
+          name: floor % 2 === 1 ? "Fi" : "傅远平",
+          mes: `第 ${floor} 楼的测试剧情内容。`,
+        })),
+      }),
     });
     lab.open();
   </script>

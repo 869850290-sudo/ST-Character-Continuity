@@ -1,6 +1,9 @@
 "use strict";
 
 const path = require("node:path");
+const crypto = require("node:crypto");
+const { runAnalysis } = require("./analysis.cjs");
+const { AnalysisConfigStore, publicConfig } = require("./analysis-config.cjs");
 const { recall } = require("./recall.cjs");
 const { StateStore } = require("./store.cjs");
 const {
@@ -13,6 +16,107 @@ const {
 
 const DATA_ROOT = path.join(__dirname, "..", "data");
 const store = new StateStore(DATA_ROOT);
+const analysisConfigStore = new AnalysisConfigStore(DATA_ROOT);
+const analysisJobs = new Map();
+
+function progressKey(storyId, timelineId, chatKey) {
+  return profileKey(storyId, timelineId, `chat:${chatKey}`);
+}
+
+function analysisBatches(state, storyId, timelineId, chatKey) {
+  return Object.values(state.batches)
+    .filter((batch) => batch?.storyId === storyId && batch?.timelineId === timelineId)
+    .filter((batch) => !chatKey || batch.chatKey === chatKey)
+    .sort((a, b) => Number(b.order ?? 0) - Number(a.order ?? 0));
+}
+
+function contiguousProcessedThrough(batches) {
+  let processedThrough = -1;
+  const ranges = batches
+    .filter((batch) => batch?.status === "committed")
+    .map((batch) => ({
+      start: Math.max(0, Number(batch.startFloor ?? 0)),
+      end: Math.max(0, Number(batch.endFloor ?? -1)),
+    }))
+    .filter((range) => range.end >= range.start)
+    .sort((a, b) => a.start - b.start || a.end - b.end);
+  for (const range of ranges) {
+    if (range.start > processedThrough + 1) break;
+    processedThrough = Math.max(processedThrough, range.end);
+  }
+  return processedThrough;
+}
+
+function cleanupJobs() {
+  const cutoff = Date.now() - 30 * 60 * 1000;
+  for (const [id, job] of analysisJobs) {
+    if (job.updatedAt < cutoff && job.status !== "running") analysisJobs.delete(id);
+  }
+}
+
+function startAnalysisJob(payload, state, config) {
+  cleanupJobs();
+  const runningForChat = [...analysisJobs.values()].filter((job) =>
+    job.status === "running" &&
+    job.payload.storyId === payload.storyId &&
+    job.payload.timelineId === payload.timelineId &&
+    job.payload.chatKey === payload.chatKey);
+  const existing = runningForChat.find((job) =>
+    Number(job.payload.startFloor) === Number(payload.startFloor) &&
+    Number(job.payload.endFloor) === Number(payload.endFloor));
+  if (existing) return existing;
+  if (runningForChat.length) {
+    throw new Error("当前聊天已有一项人物分析正在进行，请等待它完成后再开始下一段。");
+  }
+
+  const job = {
+    id: crypto.randomUUID(),
+    status: "running",
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    payload,
+    result: null,
+    error: "",
+    accepted: false,
+  };
+  analysisJobs.set(job.id, job);
+  Promise.resolve()
+    .then(() => runAnalysis(config, payload, state))
+    .then((result) => {
+      job.result = result;
+      job.status = "completed";
+      job.updatedAt = Date.now();
+    })
+    .catch((error) => {
+      job.error = error instanceof Error ? error.message : String(error);
+      job.status = "failed";
+      job.updatedAt = Date.now();
+      console.error("[Character Continuity] 人物分析失败：", job.error);
+    });
+  return job;
+}
+
+function publicJob(job) {
+  return {
+    id: job.id,
+    status: job.status,
+    error: job.error,
+    accepted: job.accepted,
+    createdAt: new Date(job.createdAt).toISOString(),
+    updatedAt: new Date(job.updatedAt).toISOString(),
+    payload: {
+      chatKey: job.payload.chatKey,
+      chatTitle: job.payload.chatTitle,
+      startFloor: job.payload.startFloor,
+      endFloor: job.payload.endFloor,
+      mode: job.payload.mode,
+    },
+    ...(job.status === "completed" ? {
+      result: job.result.result,
+      cleanedContext: job.result.cleanedContext,
+    } : {}),
+  };
+}
 
 function errorResponse(res, error) {
   console.error("[Character Continuity]", error);
@@ -103,7 +207,8 @@ function relationFromRequest(raw) {
   };
 }
 
-function workspacePayload(state, storyId, timelineId) {
+function workspacePayload(state, storyId, timelineId, chatKey = "") {
+  const key = chatKey ? progressKey(storyId, timelineId, chatKey) : "";
   return {
     storyId,
     timelineId,
@@ -111,6 +216,8 @@ function workspacePayload(state, storyId, timelineId) {
     milestones: allMilestones(state, storyId, timelineId),
     relations: materializeRelationships(state, storyId, timelineId),
     graphPositions: state.graphPositions,
+    progress: key ? state.analysisProgress[key] ?? null : null,
+    batches: analysisBatches(state, storyId, timelineId, chatKey).slice(0, 50),
     counts: {
       batches: Object.values(state.batches).filter((batch) => batch?.status === "committed").length,
     },
@@ -125,7 +232,7 @@ async function init(router) {
       const state = await store.read();
       res.json({
         success: true,
-        version: "0.2.1",
+        version: "0.3.0",
         stateVersion: state.version,
         batches: Object.keys(state.batches).length,
       });
@@ -166,8 +273,12 @@ async function init(router) {
     try {
       const storyId = text(req.body?.storyId, 200);
       const timelineId = text(req.body?.timelineId, 200);
+      const chatKey = text(req.body?.chatKey, 500);
       const state = await store.read();
-      res.json({ success: true, workspace: workspacePayload(state, storyId, timelineId) });
+      res.json({
+        success: true,
+        workspace: workspacePayload(state, storyId, timelineId, chatKey),
+      });
     } catch (error) {
       errorResponse(res, error);
     }
@@ -314,6 +425,173 @@ async function init(router) {
     }
   });
 
+  router.post("/analysis/config/get", async (_req, res) => {
+    try {
+      res.json({ success: true, config: publicConfig(await analysisConfigStore.read()) });
+    } catch (error) {
+      errorResponse(res, error);
+    }
+  });
+
+  router.post("/analysis/config/save", async (req, res) => {
+    try {
+      const saved = await analysisConfigStore.save(req.body?.config ?? {});
+      res.json({
+        success: true,
+        config: publicConfig(saved),
+        message: "人物分析模型和提示词已保存。",
+      });
+    } catch (error) {
+      errorResponse(res, error);
+    }
+  });
+
+  router.post("/analysis/start", async (req, res) => {
+    try {
+      const payload = {
+        storyId: text(req.body?.storyId, 200),
+        timelineId: text(req.body?.timelineId, 200),
+        chatKey: text(req.body?.chatKey, 500),
+        chatTitle: text(req.body?.chatTitle, 500),
+        startFloor: Math.max(0, Number(req.body?.startFloor ?? 0)),
+        endFloor: Math.max(0, Number(req.body?.endFloor ?? 0)),
+        mode: req.body?.mode === "auto" ? "auto" : "manual",
+        priorityCharacters: stringList(req.body?.priorityCharacters, 100),
+        messages: Array.isArray(req.body?.messages)
+          ? req.body.messages.slice(0, 500).map((message, index) => ({
+            floor: Math.max(0, Number(message?.floor ?? index)),
+            is_user: Boolean(message?.is_user),
+            name: text(message?.name, 300),
+            send_date: text(message?.send_date, 500),
+            mes: text(message?.mes, 500_000),
+          }))
+          : [],
+      };
+      if (!payload.storyId || !payload.timelineId || !payload.chatKey) {
+        throw new Error("人物分析缺少故事、时间线或聊天标识。");
+      }
+      if (payload.endFloor < payload.startFloor) {
+        throw new Error("终点楼层不能小于起始楼层。");
+      }
+      const selected = payload.messages.filter((message) =>
+        message.floor >= payload.startFloor && message.floor <= payload.endFloor);
+      if (!selected.length) throw new Error("所选楼层没有可分析的聊天内容。");
+      payload.messages = selected;
+      const job = startAnalysisJob(
+        payload,
+        await store.read(),
+        await analysisConfigStore.read(),
+      );
+      res.status(202).json({ success: true, job: publicJob(job) });
+    } catch (error) {
+      errorResponse(res, error);
+    }
+  });
+
+  router.post("/analysis/status", async (req, res) => {
+    try {
+      cleanupJobs();
+      const job = analysisJobs.get(text(req.body?.jobId, 200));
+      if (!job) return res.status(404).json({ success: false, error: "分析任务不存在或已过期。" });
+      res.json({ success: true, job: publicJob(job) });
+    } catch (error) {
+      errorResponse(res, error);
+    }
+  });
+
+  router.post("/analysis/accept", async (req, res) => {
+    try {
+      const job = analysisJobs.get(text(req.body?.jobId, 200));
+      if (!job) return res.status(404).json({ success: false, error: "分析任务不存在或已过期。" });
+      if (job.status !== "completed") throw new Error("分析尚未完成，暂时不能采纳。");
+      if (job.accepted) throw new Error("这次分析已经采纳过了。");
+      const state = await store.read();
+      const batches = Object.values(state.batches);
+      const order = Math.max(0, ...batches.map((batch) => Number(batch?.order ?? 0))) + 1;
+      const acceptedAt = new Date().toISOString();
+      const batchId = `analysis:${acceptedAt}:${job.id}`;
+      state.batches[batchId] = {
+        batchId,
+        rangeKey: `${job.payload.chatKey}:${job.payload.startFloor}-${job.payload.endFloor}`,
+        runId: job.id,
+        storyId: job.payload.storyId,
+        timelineId: job.payload.timelineId,
+        chatKey: job.payload.chatKey,
+        fileName: job.payload.chatTitle || job.payload.chatKey,
+        range: `${job.payload.startFloor}-${job.payload.endFloor}`,
+        startFloor: job.payload.startFloor,
+        endFloor: job.payload.endFloor,
+        mode: job.payload.mode,
+        acceptedAt,
+        order,
+        status: "committed",
+        previousRuns: [],
+        result: job.result.result,
+      };
+      const key = progressKey(job.payload.storyId, job.payload.timelineId, job.payload.chatKey);
+      const committed = analysisBatches(
+        state,
+        job.payload.storyId,
+        job.payload.timelineId,
+        job.payload.chatKey,
+      ).filter((batch) => batch.status === "committed");
+      state.analysisProgress[key] = {
+        storyId: job.payload.storyId,
+        timelineId: job.payload.timelineId,
+        chatKey: job.payload.chatKey,
+        chatTitle: job.payload.chatTitle,
+        processedThrough: contiguousProcessedThrough(committed),
+        sequence: committed.length,
+        lastBatchId: batchId,
+        lastRunAt: acceptedAt,
+        lastStatus: "success",
+        lastError: "",
+      };
+      const saved = await store.replace(state, `analysis-${job.payload.startFloor}-${job.payload.endFloor}`);
+      job.accepted = true;
+      job.updatedAt = Date.now();
+      res.json({
+        success: true,
+        batch: saved.batches[batchId],
+        progress: saved.analysisProgress[key],
+        message: `已采纳 ${job.payload.startFloor}-${job.payload.endFloor} 楼的人物更新。`,
+      });
+    } catch (error) {
+      errorResponse(res, error);
+    }
+  });
+
+  router.post("/analysis/batch/revert", async (req, res) => {
+    try {
+      const batchId = text(req.body?.batchId, 1000);
+      const state = await store.read();
+      const batch = state.batches[batchId];
+      if (!batch) return res.status(404).json({ success: false, error: "没有找到这批人物更新。" });
+      batch.status = "reverted";
+      batch.revertedAt = new Date().toISOString();
+      const remaining = analysisBatches(
+        state,
+        batch.storyId,
+        batch.timelineId,
+        batch.chatKey,
+      ).filter((item) => item.status === "committed" && item.batchId !== batchId);
+      const key = progressKey(batch.storyId, batch.timelineId, batch.chatKey);
+      state.analysisProgress[key] = {
+        ...(state.analysisProgress[key] ?? {}),
+        processedThrough: contiguousProcessedThrough(remaining),
+        sequence: remaining.length,
+        lastBatchId: remaining[0]?.batchId ?? "",
+        lastRunAt: new Date().toISOString(),
+        lastStatus: "reverted",
+        lastError: "",
+      };
+      await store.replace(state, `revert-${batchId}`);
+      res.json({ success: true, message: "这批人物更新已撤回，旧版本备份仍保留。" });
+    } catch (error) {
+      errorResponse(res, error);
+    }
+  });
+
   console.log(`[Character Continuity] 后端已启动，数据目录：${DATA_ROOT}`);
 }
 
@@ -324,5 +602,8 @@ module.exports = {
     id: "character-continuity",
     name: "Character Continuity Memory",
     description: "角色画像、成长里程碑与有向关系召回服务。",
+  },
+  __test: {
+    contiguousProcessedThrough,
   },
 };

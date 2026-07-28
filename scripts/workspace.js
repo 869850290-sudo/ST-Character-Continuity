@@ -32,6 +32,16 @@ function downloadJson(fileName, value) {
   URL.revokeObjectURL(url);
 }
 
+function downloadText(fileName, value) {
+  const blob = new Blob([String(value ?? "")], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = fileName;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
 function initials(name) {
   return [...String(name || "?")].slice(0, 1).join("");
 }
@@ -102,6 +112,7 @@ function shellHtml() {
       </header>
       <div class="ccm-layout">
         <nav id="ccm-sidebar" class="ccm-sidebar">
+          <button class="ccm-nav" data-tab="analysis"><i class="fa-solid fa-brain"></i><span>人物更新</span></button>
           <button class="ccm-nav active" data-tab="profiles"><i class="fa-solid fa-address-card"></i><span>人物档案</span></button>
           <button class="ccm-nav" data-tab="milestones"><i class="fa-solid fa-route"></i><span>成长历史</span></button>
           <button class="ccm-nav" data-tab="relations"><i class="fa-solid fa-diagram-project"></i><span>关系图谱</span></button>
@@ -136,6 +147,11 @@ export function initCharacterWorkspace(deps) {
     focus: "",
     zoom: 1,
     positions: {},
+    analysisConfig: null,
+    analysisJob: null,
+    analysisPreview: null,
+    analysisBusy: false,
+    autoRetryAfter: 0,
   };
 
   function cfg() {
@@ -165,8 +181,13 @@ export function initCharacterWorkspace(deps) {
       const response = await deps.callBackend("/workspace", {
         storyId: cfg().storyId,
         timelineId: cfg().timelineId,
+        chatKey: deps.getChatSnapshot().chatKey,
       });
       state.workspace = response.workspace;
+      if (!state.analysisConfig) {
+        const configResponse = await deps.callBackend("/analysis/config/get");
+        state.analysisConfig = configResponse.config;
+      }
       state.positions = { ...response.workspace.graphPositions };
       document.querySelector("#ccm-connection-pill").textContent = "后端正常";
       document.querySelector("#ccm-connection-pill").classList.add("ok");
@@ -206,12 +227,164 @@ export function initCharacterWorkspace(deps) {
     }
     const renderer = {
       profiles: renderProfiles,
+      analysis: renderAnalysis,
       milestones: renderMilestones,
       relations: renderRelations,
       recall: renderRecall,
       settings: renderSettings,
     }[state.activeTab];
     renderer?.();
+  }
+
+  function analysisResultHtml(job) {
+    const result = job?.result;
+    if (!result) return "";
+    const updates = (result.profile_updates ?? []).filter((item) => item.decision === "update");
+    const milestones = updates.flatMap((item) => item.milestone_candidates ?? []);
+    const relations = (result.relation_changes ?? []).filter((item) =>
+      item.decision === "create" || item.decision === "update");
+    return `
+      <section class="ccm-analysis-result">
+        <header>
+          <div><span>ANALYSIS PREVIEW</span><h3>人物更新预览</h3></div>
+          <div class="ccm-analysis-counts">
+            <b>${updates.length}<small>画像</small></b>
+            <b>${milestones.length}<small>成长</small></b>
+            <b>${relations.length}<small>关系</small></b>
+          </div>
+        </header>
+        ${(result.character_audit ?? []).length ? `<div class="ccm-audit-strip">
+          ${(result.character_audit ?? []).map((item) =>
+            `<span class="${escapeHtml(item.decision)}">${escapeHtml(item.character)} · ${escapeHtml(item.decision)}</span>`,
+          ).join("")}
+        </div>` : ""}
+        ${updates.map((item) => `<article class="ccm-analysis-card">
+          <div><span>人物画像</span><h4>${escapeHtml(item.character)}</h4></div>
+          <p>${escapeHtml(item.proposed_profile?.current_profile?.current_stage || item.reason)}</p>
+          ${item.proposed_profile?.growth_synopsis
+            ? `<blockquote>${escapeHtml(item.proposed_profile.growth_synopsis)}</blockquote>` : ""}
+          ${(item.milestone_candidates ?? []).map((milestone) =>
+            `<div class="ccm-analysis-sub"><b>${escapeHtml(milestone.title)}</b>
+              <span>${escapeHtml(milestone.time)} · ${escapeHtml(milestone.location)}</span>
+              <p>${escapeHtml(milestone.narrative)}</p></div>`,
+          ).join("")}
+        </article>`).join("")}
+        ${relations.map((item) => `<article class="ccm-analysis-card relation">
+          <div><span>关系变化</span><h4>${escapeHtml(item.from)} → ${escapeHtml(item.to)}</h4></div>
+          <p><b>${escapeHtml(item.primary_type)}</b> · ${escapeHtml(item.attitude || item.reason)}</p>
+        </article>`).join("")}
+        ${(result.warnings ?? []).length ? `<div class="ccm-analysis-warning">
+          <b>模型提醒</b>${result.warnings.map((item) => `<p>${escapeHtml(item)}</p>`).join("")}
+        </div>` : ""}
+        ${job.cleanedContext ? `<details class="ccm-clean-preview"><summary>查看实际送给模型的清洗后正文</summary>
+          <pre>${escapeHtml(job.cleanedContext)}</pre></details>` : ""}
+        <footer>
+          <button data-action="discard-analysis">暂不采用</button>
+          <button data-action="accept-analysis" class="ccm-primary">
+            <i class="fa-solid fa-check"></i> 采纳这次更新
+          </button>
+        </footer>
+      </section>`;
+  }
+
+  function renderAnalysis() {
+    const snapshot = deps.getChatSnapshot();
+    const progress = state.workspace?.progress;
+    const processed = Number(progress?.processedThrough ?? -1);
+    const suggestedStart = processed >= snapshot.latestFloor
+      ? Math.max(0, snapshot.latestFloor - 9)
+      : processed + 1;
+    const current = state.analysisConfig ?? {};
+    const running = state.analysisJob?.status === "running";
+    const batches = state.workspace?.batches ?? [];
+    view.innerHTML = `
+      <div class="ccm-section-heading">
+        <div><span>CHARACTER ANALYSIS</span><h2>人物更新</h2>
+          <p>按楼层分析人物画像、成长与关系。事件总结仍交给 Anima。</p></div>
+      </div>
+      <div class="ccm-analysis-progress">
+        <div><span>当前聊天</span><b>${escapeHtml(snapshot.chatTitle)}</b></div>
+        <div><span>最新楼层</span><b>${snapshot.latestFloor}</b></div>
+        <div><span>已处理至</span><b>${processed}</b></div>
+        <div><span>已采纳批次</span><b>${Number(progress?.sequence ?? 0)}</b></div>
+      </div>
+      <section class="ccm-analysis-panel">
+        <header><div><span>AUTOMATION</span><h3>自动人物更新</h3></div>
+          <label class="ccm-switch"><input id="ccm-analysis-auto" type="checkbox"
+            ${cfg().analysisAutoEnabled ? "checked" : ""}><span></span></label>
+        </header>
+        <p>打开后，每累计 N 层完整对话会自动分析并采纳。现在默认关闭，等你确认质量后再开。</p>
+        <div class="ccm-analysis-controls">
+          <label>触发间隔（楼）<input id="ccm-analysis-interval" type="number" min="2" max="100"
+            value="${Number(cfg().analysisInterval ?? 10)}"></label>
+          <button data-action="save-analysis-settings" class="ccm-primary">
+            <i class="fa-solid fa-floppy-disk"></i> 保存自动设置
+          </button>
+        </div>
+      </section>
+      <section class="ccm-analysis-panel">
+        <header><div><span>MANUAL RUN</span><h3>手动分析楼层</h3></div></header>
+        <div class="ccm-range-controls">
+          <label>起始楼层<input id="ccm-analysis-start" type="number" min="0"
+            max="${Math.max(0, snapshot.latestFloor)}" value="${suggestedStart}"></label>
+          <label>终点楼层<input id="ccm-analysis-end" type="number" min="0"
+            max="${Math.max(0, snapshot.latestFloor)}" value="${snapshot.latestFloor}"></label>
+          <button data-action="preview-range"><i class="fa-solid fa-eye"></i> 预览范围</button>
+          <button data-action="run-analysis" class="ccm-primary" ${running ? "disabled" : ""}>
+            <i class="fa-solid ${running ? "fa-circle-notch fa-spin" : "fa-play"}"></i>
+            ${running ? "模型正在分析…" : "执行人物分析"}
+          </button>
+        </div>
+        ${running ? `<div class="ccm-job-running"><b>任务已交给服务器后台处理</b>
+          <span>网页会每两秒取一次结果，不会再因 Cloudflare 等待过久而报 524。</span></div>` : ""}
+        ${state.analysisPreview ? analysisResultHtml(state.analysisPreview) : ""}
+      </section>
+      <section class="ccm-analysis-panel">
+        <header><div><span>MODEL & PROMPT</span><h3>分析模型与提示词</h3></div></header>
+        <div class="ccm-model-grid">
+          <label>接口类型<select id="ccm-analysis-provider">
+            <option value="openai" ${current.provider !== "gemini" ? "selected" : ""}>OpenAI 兼容（DeepSeek / GLM）</option>
+            <option value="gemini" ${current.provider === "gemini" ? "selected" : ""}>Gemini 官方</option>
+          </select></label>
+          <label>API 基础地址<input id="ccm-analysis-base-url" value="${escapeHtml(current.baseUrl || "")}"
+            placeholder="https://api.deepseek.com/v1"></label>
+          <label>模型名称<input id="ccm-analysis-model" value="${escapeHtml(current.model || "")}"
+            placeholder="输入供应商给出的模型名"></label>
+          <label>API Key<input id="ccm-analysis-key" type="password" value=""
+            placeholder="${current.hasApiKey ? "已保存；留空则不修改" : "尚未保存"}"></label>
+          <label>思考模式<select id="ccm-analysis-thinking">
+            ${[["fast", "快速"], ["balanced", "平衡"], ["deep", "深度"]].map(([value, label]) =>
+              `<option value="${value}" ${current.thinkingMode === value ? "selected" : ""}>${label}</option>`,
+            ).join("")}
+          </select></label>
+          <label>最长等待（分钟）<input id="ccm-analysis-timeout" type="number" min="1" max="15"
+            value="${Math.round(Number(current.timeoutMs ?? 600000) / 60000)}"></label>
+        </div>
+        <label class="ccm-prompt-field">人物连续性分析提示词
+          <textarea id="ccm-analysis-prompt">${escapeHtml(current.prompt || "")}</textarea>
+        </label>
+        <p class="ccm-clean-note"><i class="fa-solid fa-filter"></i>
+          内部清洗已固定启用：开场白和用户消息保留原文；角色回复自动提取 &lt;content&gt;，
+          剥离 thinking / analysis、HTML、CSS、注释和状态栏标记。这里不执行来源不明的自定义正则。</p>
+        <div class="ccm-settings-actions">
+          <button data-action="save-analysis-config" class="ccm-primary">
+            <i class="fa-solid fa-floppy-disk"></i> 保存模型与提示词
+          </button>
+          <button data-action="export-analysis-prompt"><i class="fa-solid fa-file-export"></i> 导出提示词</button>
+        </div>
+      </section>
+      <section class="ccm-analysis-panel">
+        <header><div><span>UPDATE HISTORY</span><h3>已采纳的人物更新</h3></div></header>
+        ${batches.length ? `<div class="ccm-batch-list">${batches.map((batch) => `
+          <article class="${batch.status === "reverted" ? "reverted" : ""}">
+            <div><b>${escapeHtml(batch.range || "未知范围")} 楼</b>
+              <span>${escapeHtml(batch.mode === "auto" ? "自动" : "手动")} · ${escapeHtml(batch.acceptedAt || "")}</span></div>
+            <span>${(batch.result?.profile_updates ?? []).filter((item) => item.decision === "update").length} 画像 ·
+              ${(batch.result?.relation_changes ?? []).filter((item) => ["create", "update"].includes(item.decision)).length} 关系</span>
+            ${batch.status === "committed" ? `<button data-action="revert-analysis-batch"
+              data-batch-id="${escapeHtml(batch.batchId)}">撤回</button>` : `<em>已撤回</em>`}
+          </article>`).join("")}</div>` : `<p class="ccm-muted">当前聊天还没有采纳过人物更新。</p>`}
+      </section>`;
   }
 
   function renderProfiles() {
@@ -627,6 +800,112 @@ export function initCharacterWorkspace(deps) {
     relationModal(edge);
   }
 
+  function rangeValues() {
+    const snapshot = deps.getChatSnapshot();
+    const start = Math.max(0, Number(document.querySelector("#ccm-analysis-start")?.value ?? 0));
+    const end = Math.min(
+      snapshot.latestFloor,
+      Number(document.querySelector("#ccm-analysis-end")?.value ?? snapshot.latestFloor),
+    );
+    if (end < start) throw new Error("终点楼层不能小于起始楼层。");
+    return { snapshot, start, end };
+  }
+
+  function previewRange() {
+    const { snapshot, start, end } = rangeValues();
+    const selected = snapshot.messages.filter((message) =>
+      message.floor >= start && message.floor <= end);
+    modalRoot.innerHTML = `<div class="ccm-modal-backdrop">
+      <div class="ccm-modal ccm-range-modal">
+        <header><div><span>RANGE PREVIEW</span><h3>${start}-${end} 楼 · ${selected.length} 条消息</h3></div>
+          <button type="button" data-modal-close>×</button></header>
+        <p class="ccm-modal-note">这是选中的原始楼层。真正发送前，角色回复还会经过固定清洗。</p>
+        <div class="ccm-range-list">${selected.map((message) => `
+          <article><b>#${message.floor} · ${escapeHtml(message.is_user ? "用户" : message.name || "角色")}</b>
+            <p>${escapeHtml(String(message.mes).slice(0, 500))}</p></article>`).join("")}</div>
+        <footer><button type="button" data-modal-close>关闭</button></footer>
+      </div></div>`;
+    modalRoot.querySelectorAll("[data-modal-close]").forEach((button) =>
+      button.addEventListener("click", () => { modalRoot.innerHTML = ""; }));
+  }
+
+  async function pollAnalysisJob(jobId) {
+    for (let count = 0; count < 480; count += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      const response = await deps.callBackend("/analysis/status", { jobId });
+      state.analysisJob = response.job;
+      if (response.job.status !== "running") return response.job;
+      if (state.activeTab === "analysis" && !overlay.classList.contains("ccm-hidden")) renderAnalysis();
+    }
+    throw new Error("前端等待超过 16 分钟；后台任务可能仍在运行，请稍后刷新查看。");
+  }
+
+  async function runAnalysisRange({ start, end, mode = "manual", autoAccept = false }) {
+    if (state.analysisBusy) return null;
+    state.analysisBusy = true;
+    const snapshot = deps.getChatSnapshot();
+    try {
+      const response = await deps.callBackend("/analysis/start", {
+        storyId: cfg().storyId,
+        timelineId: cfg().timelineId,
+        chatKey: snapshot.chatKey,
+        chatTitle: snapshot.chatTitle,
+        startFloor: start,
+        endFloor: end,
+        mode,
+        priorityCharacters: snapshot.priorityCharacters,
+        messages: snapshot.messages,
+      });
+      state.analysisJob = response.job;
+      if (state.activeTab === "analysis" && !overlay.classList.contains("ccm-hidden")) renderAnalysis();
+      const job = await pollAnalysisJob(response.job.id);
+      if (job.status === "failed") throw new Error(job.error || "人物分析失败。");
+      state.analysisPreview = job;
+      if (autoAccept) {
+        await deps.callBackend("/analysis/accept", { jobId: job.id });
+        state.analysisPreview = null;
+        state.autoRetryAfter = 0;
+        deps.notify("success", `自动人物更新已完成：${start}-${end} 楼。`);
+        if (!overlay.classList.contains("ccm-hidden")) await loadWorkspace();
+      } else {
+        deps.notify("success", `人物分析完成：${start}-${end} 楼，请先预览再采纳。`);
+        if (state.activeTab === "analysis" && !overlay.classList.contains("ccm-hidden")) renderAnalysis();
+      }
+      return job;
+    } finally {
+      state.analysisBusy = false;
+      if (state.activeTab === "analysis" && !overlay.classList.contains("ccm-hidden")) renderAnalysis();
+    }
+  }
+
+  async function autoCheck() {
+    if (!cfg().analysisAutoEnabled || state.analysisBusy || Date.now() < state.autoRetryAfter) return;
+    const snapshot = deps.getChatSnapshot();
+    if (snapshot.latestFloor < 0 || snapshot.messages.at(-1)?.is_user) return;
+    try {
+      const response = await deps.callBackend("/workspace", {
+        storyId: cfg().storyId,
+        timelineId: cfg().timelineId,
+        chatKey: snapshot.chatKey,
+      });
+      const processed = Number(response.workspace?.progress?.processedThrough ?? -1);
+      const interval = Math.max(2, Math.min(100, Number(cfg().analysisInterval ?? 10)));
+      const start = processed + 1;
+      let end = start + interval - 1;
+      if (end > snapshot.latestFloor) return;
+      const endMessage = snapshot.messages.find((message) => message.floor === end);
+      const followingMessage = snapshot.messages.find((message) => message.floor === end + 1);
+      if (endMessage?.is_user) {
+        if (!followingMessage || followingMessage.is_user) return;
+        end += 1;
+      }
+      await runAnalysisRange({ start, end, mode: "auto", autoAccept: true });
+    } catch (error) {
+      state.autoRetryAfter = Date.now() + 5 * 60 * 1000;
+      deps.notify("warning", `自动人物更新暂未完成：${error.message}（5 分钟后再试，不会跳过楼层）`);
+    }
+  }
+
   async function handleAction(action, button) {
     if (action === "reload") return loadWorkspace();
     if (action === "add-relation") return relationModal();
@@ -658,6 +937,89 @@ export function initCharacterWorkspace(deps) {
       try {
         state.recall = await deps.runRecall();
         renderRecall();
+      } catch (error) {
+        deps.notify("error", error.message);
+      }
+      return;
+    }
+    if (action === "preview-range") {
+      try {
+        previewRange();
+      } catch (error) {
+        deps.notify("error", error.message);
+      }
+      return;
+    }
+    if (action === "run-analysis") {
+      try {
+        const { start, end } = rangeValues();
+        await runAnalysisRange({ start, end });
+      } catch (error) {
+        deps.notify("error", error.message);
+      }
+      return;
+    }
+    if (action === "accept-analysis") {
+      try {
+        await deps.callBackend("/analysis/accept", { jobId: state.analysisPreview?.id });
+        deps.notify("success", "人物画像、成长与关系更新已采纳。");
+        state.analysisPreview = null;
+        await loadWorkspace();
+      } catch (error) {
+        deps.notify("error", error.message);
+      }
+      return;
+    }
+    if (action === "discard-analysis") {
+      state.analysisPreview = null;
+      renderAnalysis();
+      return;
+    }
+    if (action === "save-analysis-settings") {
+      cfg().analysisAutoEnabled = document.querySelector("#ccm-analysis-auto").checked;
+      cfg().analysisInterval = Math.max(
+        2,
+        Math.min(100, Number(document.querySelector("#ccm-analysis-interval").value || 10)),
+      );
+      deps.saveSettings();
+      deps.notify(
+        "success",
+        cfg().analysisAutoEnabled
+          ? `自动人物更新已开启：每 ${cfg().analysisInterval} 楼执行一次。`
+          : "自动人物更新保持关闭；手动分析仍可使用。",
+      );
+      renderAnalysis();
+      return;
+    }
+    if (action === "save-analysis-config") {
+      try {
+        const response = await deps.callBackend("/analysis/config/save", { config: {
+          provider: document.querySelector("#ccm-analysis-provider").value,
+          baseUrl: document.querySelector("#ccm-analysis-base-url").value.trim(),
+          model: document.querySelector("#ccm-analysis-model").value.trim(),
+          apiKey: document.querySelector("#ccm-analysis-key").value.trim(),
+          thinkingMode: document.querySelector("#ccm-analysis-thinking").value,
+          timeoutMs: Number(document.querySelector("#ccm-analysis-timeout").value || 10) * 60_000,
+          prompt: document.querySelector("#ccm-analysis-prompt").value,
+        } });
+        state.analysisConfig = response.config;
+        deps.notify("success", "人物分析模型与提示词已保存。");
+        renderAnalysis();
+      } catch (error) {
+        deps.notify("error", error.message);
+      }
+      return;
+    }
+    if (action === "export-analysis-prompt") {
+      downloadText("character-continuity-prompt.txt", document.querySelector("#ccm-analysis-prompt").value);
+      return;
+    }
+    if (action === "revert-analysis-batch") {
+      if (!window.confirm("撤回这批人物更新？插件会保留操作前备份。")) return;
+      try {
+        await deps.callBackend("/analysis/batch/revert", { batchId: button.dataset.batchId });
+        deps.notify("success", "这批人物更新已撤回。");
+        await loadWorkspace();
       } catch (error) {
         deps.notify("error", error.message);
       }
@@ -758,5 +1120,6 @@ export function initCharacterWorkspace(deps) {
     syncSettings() {
       if (state.activeTab === "settings" && !overlay.classList.contains("ccm-hidden")) renderSettings();
     },
+    autoCheck,
   };
 }
