@@ -1,6 +1,6 @@
 const GRAPH_WIDTH = 1000;
 const GRAPH_HEIGHT = 660;
-const FRONTEND_VERSION = "0.5.2";
+const FRONTEND_VERSION = "0.5.3";
 
 function escapeHtml(value) {
   return String(value ?? "")

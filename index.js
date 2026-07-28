@@ -1,8 +1,8 @@
-import { initCharacterWorkspace } from "./scripts/workspace.js?v=0.5.2";
+import { initCharacterWorkspace } from "./scripts/workspace.js?v=0.5.3";
 
 const MODULE_NAME = "character_continuity";
 const API_ROOT = "/api/plugins/character-continuity";
-const FRONTEND_VERSION = "0.5.2";
+const FRONTEND_VERSION = "0.5.3";
 
 const DEFAULT_SETTINGS = Object.freeze({
   enabled: false,
@@ -170,7 +170,10 @@ async function runRecall(chat = context().chat, contextSize = null) {
   const cfg = settings();
   const snapshot = currentChatSnapshot();
   const exactContextSize = Number(contextSize);
-  const hasExactContextSize = Number.isFinite(exactContextSize) && exactContextSize >= 0;
+  const hasExactContextSize = contextSize !== null
+    && contextSize !== undefined
+    && Number.isFinite(exactContextSize)
+    && exactContextSize >= 0;
   const response = await callBackend("/recall", {
     cardKey: snapshot.cardKey,
     chatKey: snapshot.chatKey,
