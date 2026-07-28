@@ -1,5 +1,6 @@
 const GRAPH_WIDTH = 1000;
 const GRAPH_HEIGHT = 660;
+const FRONTEND_VERSION = "0.4.2";
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -102,7 +103,8 @@ function shellHtml() {
             <i class="fa-solid fa-bars"></i>
           </button>
           <div class="ccm-brand-mark"><i class="fa-solid fa-users-viewfinder"></i></div>
-          <div><b>Character Continuity</b><span>人物连续性记忆</span></div>
+          <div><b>Character Continuity <small class="ccm-version">v${FRONTEND_VERSION}</small></b>
+            <span>人物连续性记忆</span></div>
         </div>
         <div class="ccm-header-actions">
           <span id="ccm-connection-pill" class="ccm-pill">未连接</span>
@@ -1272,18 +1274,34 @@ export function initCharacterWorkspace(deps) {
     }
   }
 
-  overlay.addEventListener("click", (event) => {
+  let lastTouchAction = { button: null, at: 0 };
+
+  function actionButtonFromEvent(event) {
     const path = typeof event.composedPath === "function" ? event.composedPath() : [];
-    const button = path.find((node) =>
+    return path.find((node) =>
       node instanceof HTMLElement && node.dataset?.action)
       ?? (event.target instanceof Element
         ? event.target.closest("[data-action]")
         : event.target?.parentElement?.closest?.("[data-action]"));
+  }
+
+  function dispatchWorkspaceAction(event) {
+    if (event.type === "pointerup" && event.pointerType === "mouse") return;
+    const button = actionButtonFromEvent(event);
     if (!button || button.disabled || modalRoot.contains(button)) return;
+    const now = Date.now();
+    if (lastTouchAction.button === button && now - lastTouchAction.at < 800) return;
+    if (event.type === "pointerup") {
+      lastTouchAction = { button, at: now };
+      event.preventDefault();
+    }
     Promise.resolve(handleAction(button.dataset.action, button)).catch((error) => {
       deps.notify("error", `操作没有完成：${error.message}`);
     });
-  }, { capture: true });
+  }
+
+  overlay.addEventListener("pointerup", dispatchWorkspaceAction, { capture: true });
+  overlay.addEventListener("click", dispatchWorkspaceAction, { capture: true });
   view.addEventListener("change", (event) => {
     if (event.target.id === "ccm-graph-focus") {
       state.focus = event.target.value;
