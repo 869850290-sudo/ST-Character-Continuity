@@ -1,6 +1,6 @@
 const GRAPH_WIDTH = 1000;
 const GRAPH_HEIGHT = 660;
-const FRONTEND_VERSION = "0.4.5";
+const FRONTEND_VERSION = "0.4.6";
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -776,7 +776,7 @@ export function initCharacterWorkspace(deps) {
     const residualText = (profile.residual_patterns ?? []).map((item) =>
       [item.trigger, item.likely_response, item.counterweight].join("｜"),
     ).join("\n");
-    modalRoot.innerHTML = `<div class="ccm-modal-backdrop">
+    modalRoot.innerHTML = `<dialog id="ccm-profile-dialog" class="ccm-native-dialog">
       <form id="ccm-profile-form" class="ccm-modal">
         <header><div><span>PROFILE EDITOR</span><h3>${escapeHtml(profile.character)}</h3></div>
           <button type="button" data-modal-close aria-label="关闭">×</button></header>
@@ -795,9 +795,18 @@ export function initCharacterWorkspace(deps) {
           <button type="button" data-modal-close>取消</button>
           <button type="submit" class="ccm-primary">保存画像</button>
         </footer>
-      </form></div>`;
+      </form></dialog>`;
+    const dialog = modalRoot.querySelector("#ccm-profile-dialog");
+    const closeProfileModal = () => {
+      if (dialog.open) dialog.close();
+      modalRoot.innerHTML = "";
+    };
     modalRoot.querySelectorAll("[data-modal-close]").forEach((button) =>
-      button.addEventListener("click", () => { modalRoot.innerHTML = ""; }));
+      button.addEventListener("click", closeProfileModal));
+    dialog.addEventListener("cancel", (event) => {
+      event.preventDefault();
+      closeProfileModal();
+    });
     modalRoot.querySelector("#ccm-profile-form").addEventListener("submit", async (event) => {
       event.preventDefault();
       const form = new FormData(event.currentTarget);
@@ -820,7 +829,7 @@ export function initCharacterWorkspace(deps) {
           residual_patterns: residuals,
         } });
         deps.notify("success", `${profile.character}的画像已保存。`);
-        modalRoot.innerHTML = "";
+        closeProfileModal();
         await loadWorkspace();
       } catch (error) {
         deps.notify("error", error.message);
@@ -833,12 +842,14 @@ export function initCharacterWorkspace(deps) {
           character: profile.character,
         });
         deps.notify("success", "已恢复模型生成版本。");
-        modalRoot.innerHTML = "";
+        closeProfileModal();
         await loadWorkspace();
       } catch (error) {
         deps.notify("error", error.message);
       }
     });
+    if (typeof dialog.showModal === "function") dialog.showModal();
+    else dialog.setAttribute("open", "");
   }
 
   function openProfileEditorByName(name) {
@@ -871,7 +882,7 @@ export function initCharacterWorkspace(deps) {
       active: true,
       version: 0,
     };
-    modalRoot.innerHTML = `<div class="ccm-modal-backdrop">
+    modalRoot.innerHTML = `<dialog id="ccm-relation-dialog" class="ccm-native-dialog">
       <form id="ccm-relation-form" class="ccm-modal ccm-relation-modal">
         <header><div><span>RELATION EDITOR</span><h3>${edge ? "编辑关系" : "新增关系"}</h3></div>
           <button type="button" data-modal-close>×</button></header>
@@ -897,9 +908,18 @@ export function initCharacterWorkspace(deps) {
           <button type="button" data-modal-close>取消</button>
           <button type="submit" class="ccm-primary">保存关系</button>
         </footer>
-      </form></div>`;
+      </form></dialog>`;
+    const dialog = modalRoot.querySelector("#ccm-relation-dialog");
+    const closeRelationModal = () => {
+      if (dialog.open) dialog.close();
+      modalRoot.innerHTML = "";
+    };
     modalRoot.querySelectorAll("[data-modal-close]").forEach((button) =>
-      button.addEventListener("click", () => { modalRoot.innerHTML = ""; }));
+      button.addEventListener("click", closeRelationModal));
+    dialog.addEventListener("cancel", (event) => {
+      event.preventDefault();
+      closeRelationModal();
+    });
     const strength = modalRoot.querySelector("#ccm-strength");
     strength.addEventListener("input", () => {
       modalRoot.querySelector("#ccm-strength-output").textContent = `${Math.round(Number(strength.value) * 100)}%`;
@@ -929,7 +949,7 @@ export function initCharacterWorkspace(deps) {
       try {
         await deps.callBackend("/relation/save", { relation, previous: edge });
         deps.notify("success", "人物关系已保存。");
-        modalRoot.innerHTML = "";
+        closeRelationModal();
         await loadWorkspace();
       } catch (error) {
         deps.notify("error", error.message);
@@ -939,12 +959,14 @@ export function initCharacterWorkspace(deps) {
       try {
         await deps.callBackend("/relation/deactivate", { relation: edge });
         deps.notify("success", "人物关系已停用。");
-        modalRoot.innerHTML = "";
+        closeRelationModal();
         await loadWorkspace();
       } catch (error) {
         deps.notify("error", error.message);
       }
     });
+    if (typeof dialog.showModal === "function") dialog.showModal();
+    else dialog.setAttribute("open", "");
   }
 
   function openRelationEditor(edge) {
