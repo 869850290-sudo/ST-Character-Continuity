@@ -6,15 +6,30 @@ const path = require("node:path");
 const root = path.resolve(__dirname, "..");
 const read = (file) => fs.readFileSync(path.join(root, file), "utf8");
 
-test("v0.4.4 frontend release is visibly versioned and cache-busted", () => {
+test("v0.4.5 frontend release is visibly versioned and cache-busted", () => {
   const manifest = JSON.parse(read("manifest.json"));
   const entry = read("index.js");
   const workspace = read("scripts/workspace.js");
 
-  assert.equal(manifest.version, "0.4.4");
+  assert.equal(manifest.version, "0.4.5");
   assert.equal(manifest.auto_update, true);
-  assert.match(entry, /workspace\.js\?v=0\.4\.4/);
+  assert.match(entry, /workspace\.js\?v=0\.4\.5/);
   assert.match(workspace, /ccm-version">v\$\{FRONTEND_VERSION\}/);
+});
+
+test("legacy chat messages keep their content and string boolean flags", () => {
+  const entry = read("index.js");
+  const flagSource = entry.match(/function messageFlag\(value\) \{[\s\S]*?\n\}/)?.[0];
+  const textSource = entry.match(/function messageText\(message\) \{[\s\S]*?\n\}/)?.[0];
+  const messageFlag = Function(`${flagSource}; return messageFlag;`)();
+  const messageText = Function(`${textSource}; return messageText;`)();
+
+  assert.match(entry, /function messageFlag/);
+  assert.match(entry, /message\?\.mes \?\? message\?\.content \?\? message\?\.text/);
+  assert.match(entry, /message\.mes && !message\.is_continuity_injection/);
+  assert.equal(messageFlag("false"), false);
+  assert.equal(messageFlag("true"), true);
+  assert.equal(messageText({ content: "旧格式正文" }), "旧格式正文");
 });
 
 test("library editor uses a native top-layer dialog", () => {
