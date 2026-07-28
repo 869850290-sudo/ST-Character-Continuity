@@ -1,0 +1,12 @@
+{
+  "display_name": "人物连续性记忆",
+  "loading_order": 90,
+  "js": "index.js",
+  "css": "style.css",
+  "author": "Fi",
+  "version": "0.1.0",
+  "auto_update": false,
+  "minimum_client_version": "1.18.0",
+  "generate_interceptor": "characterContinuityInterceptor"
+}
+

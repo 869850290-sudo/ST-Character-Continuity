@@ -1,0 +1,55 @@
+.ccm-panel .inline-drawer-content {
+  padding: 0.75rem;
+}
+
+.ccm-toggle {
+  margin-bottom: 0.75rem;
+}
+
+.ccm-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.ccm-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.9rem;
+}
+
+.ccm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.8rem;
+}
+
+.ccm-status {
+  margin-top: 0.75rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--SmartThemeBorderColor);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--SmartThemeBlurTintColor) 80%, transparent);
+  font-size: 0.88rem;
+  overflow-wrap: anywhere;
+}
+
+.ccm-help {
+  margin: 0.65rem 0 0;
+  opacity: 0.75;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+@media (max-width: 700px) {
+  .ccm-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ccm-actions .menu_button {
+    flex: 1 1 calc(50% - 0.5rem);
+  }
+}
+
