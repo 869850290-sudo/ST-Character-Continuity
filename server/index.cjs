@@ -266,7 +266,7 @@ async function init(router) {
       const state = await store.read();
       res.json({
         success: true,
-        version: "0.5.0",
+        version: "0.5.1",
         stateVersion: state.version,
         batches: Object.keys(state.batches).length,
       });
@@ -471,13 +471,28 @@ async function init(router) {
       const profile = profileFromRequest(req.body?.profile);
       if (!state.libraries[profile.library_id]) throw new Error("人物画像对应的档案库不存在。");
       const previousCharacter = text(req.body?.previousCharacter, 200) || profile.character;
+      const mergeExisting = req.body?.mergeExisting === true;
       if (previousCharacter !== profile.character) {
+        const existingTarget = materializeProfiles(state, profile.library_id)[
+          profileKey(profile.library_id, profile.character)
+        ];
+        if (mergeExisting && existingTarget) {
+          profile.active_milestone_ids = [...new Set([
+            ...(existingTarget.active_milestone_ids ?? []),
+            ...(profile.active_milestone_ids ?? []),
+          ])];
+          profile.aliases = [...new Set([
+            ...(existingTarget.aliases ?? []),
+            ...(profile.aliases ?? []),
+            previousCharacter,
+          ])];
+        }
         state = renameCharacter(
           state,
           profile.library_id,
           previousCharacter,
           profile.character,
-          { mergeDuplicate: true },
+          { mergeDuplicate: true, mergeExisting },
         );
       }
       const key = profileKey(profile.library_id, profile.character);
@@ -491,7 +506,9 @@ async function init(router) {
         profile: materializeProfiles(saved, profile.library_id)[key],
         message: previousCharacter === profile.character
           ? `${profile.character}的画像已保存。`
-          : `人物已从“${previousCharacter}”改名为“${profile.character}”。`,
+          : mergeExisting
+            ? `“${previousCharacter}”已合并到“${profile.character}”。`
+            : `人物已从“${previousCharacter}”改名为“${profile.character}”。`,
       });
     } catch (error) {
       errorResponse(res, error);
@@ -666,6 +683,7 @@ async function init(router) {
         startFloor: Math.max(0, Number(req.body?.startFloor ?? 0)),
         endFloor: Math.max(0, Number(req.body?.endFloor ?? 0)),
         mode: req.body?.mode === "auto" ? "auto" : "manual",
+        userCharacter: text(req.body?.userCharacter, 200),
         priorityCharacters: stringList(req.body?.priorityCharacters, 100),
         messages: Array.isArray(req.body?.messages)
           ? req.body.messages.slice(0, 500).map((message, index) => ({

@@ -54,6 +54,9 @@ const CENSUS_PROMPT = `你是群像叙事的“人物登记员”。你的唯一
 - identity_status：named、title_only、relationship_only、ambiguous。
 
 重要性不等于成长。不要在此阶段判断成长，也不要因为本轮没有成长而漏掉人物。
+<speaker_identities> 是强制身份映射：[用户:姓名] 的全部发言都属于该姓名。
+“用户”“USER”“玩家”“你”“主角”以及“你是恶役”这类第二人称描述句都不是人物姓名，
+不得据此另建人物；涉及用户时必须使用 <speaker_identities> 中的 user_character。
 只输出合法 JSON：
 {"characters":[{
   "character":"稳定姓名或代号",
@@ -183,15 +186,41 @@ function normalizedName(value) {
   return string(value, 200).toLocaleLowerCase().replace(/\s+/g, "");
 }
 
-function normalizeRegistry(raw, priority = []) {
+const USER_PLACEHOLDER_NAMES = new Set([
+  "user",
+  "用户",
+  "玩家",
+  "你",
+  "主角",
+  "男主",
+  "女主",
+  "主人公",
+  "player",
+  "protagonist",
+]);
+
+function canonicalCharacterName(value, userCharacter = "") {
+  const name = string(value, 200);
+  const canonicalUser = string(userCharacter, 200);
+  if (!canonicalUser || normalizedName(name) === normalizedName(canonicalUser)) return name;
+  const key = normalizedName(name);
+  if (USER_PLACEHOLDER_NAMES.has(key) || /^你是.{1,80}$/u.test(name)) return canonicalUser;
+  return name;
+}
+
+function normalizeRegistry(raw, priority = [], userCharacter = "") {
   const value = extractJson(raw);
   const characters = Array.isArray(value.characters) ? value.characters : [];
   const seen = new Set();
   const normalized = characters.map((item) => {
-    const character = string(item?.character ?? item?.name, 200);
+    const rawCharacter = string(item?.character ?? item?.name, 200);
+    const character = canonicalCharacterName(rawCharacter, userCharacter);
     return {
       character,
-      aliases: strings(item?.aliases, 20, 200),
+      aliases: [...new Set([
+        ...strings(item?.aliases, 20, 200),
+        ...(rawCharacter && rawCharacter !== character ? [rawCharacter] : []),
+      ])],
       identity_status: VALID_IDENTITY_STATUSES.has(item?.identity_status)
         ? item.identity_status
         : "ambiguous",
@@ -212,11 +241,12 @@ function normalizeRegistry(raw, priority = []) {
     return true;
   });
   for (const name of priority) {
-    const key = normalizedName(name);
+    const character = canonicalCharacterName(name, userCharacter);
+    const key = normalizedName(character);
     if (!key || seen.has(key)) continue;
     seen.add(key);
     normalized.push({
-      character: string(name, 200),
+      character,
       aliases: [],
       identity_status: "named",
       identification_basis: "由当前角色卡、Persona 或既有人物档案指定。",
@@ -276,20 +306,23 @@ function normalizeProfile(raw, character) {
   };
 }
 
-function normalizeResult(raw, range) {
+function normalizeResult(raw, range, userCharacter = "") {
   const value = extractJson(raw);
   if (!Array.isArray(value.character_audit) || !Array.isArray(value.profile_updates)) {
     throw new Error("模型结果缺少 character_audit 或 profile_updates 数组。");
   }
   const character_audit = value.character_audit.slice(0, 100).map((item) => ({
-    character: string(item?.character ?? item?.name_in_text, 200),
+    character: canonicalCharacterName(
+      item?.character ?? item?.name_in_text,
+      userCharacter,
+    ),
     decision: VALID_PROFILE_DECISIONS.has(item?.decision) ? item.decision : "review",
     reason: string(item?.reason, 5000),
     evidence: strings(item?.evidence ?? item?.evidence_refs, 30, 1500),
   })).filter((item) => item.character);
 
   const profile_updates = value.profile_updates.slice(0, 100).map((item) => {
-    const character = string(item?.character, 200);
+    const character = canonicalCharacterName(item?.character, userCharacter);
     const decision = VALID_PROFILE_DECISIONS.has(item?.decision) ? item.decision : "review";
     const proposed = item?.proposed_profile && typeof item.proposed_profile === "object"
       ? normalizeProfile(item.proposed_profile, character)
@@ -300,7 +333,10 @@ function normalizeResult(raw, range) {
       reason: string(item?.reason, 5000),
       milestone_candidates: Array.isArray(item?.milestone_candidates)
         ? item.milestone_candidates.slice(0, 30).map((milestone) => ({
-          character: string(milestone?.character ?? character, 200),
+          character: canonicalCharacterName(
+            milestone?.character ?? character,
+            userCharacter,
+          ),
           title: string(milestone?.title, 500),
           dimension: string(milestone?.dimension || "other", 100),
           stage: VALID_STAGES.has(milestone?.stage) ? milestone.stage : "emerging",
@@ -309,7 +345,10 @@ function normalizeResult(raw, range) {
           evidence: strings(milestone?.evidence, 30, 1500),
           time: string(milestone?.time || "时间未注明", 500),
           location: string(milestone?.location || "地点未注明", 1000),
-          related_characters: strings(milestone?.related_characters, 30, 200),
+          related_characters: [...new Set(
+            strings(milestone?.related_characters, 30, 200)
+              .map((name) => canonicalCharacterName(name, userCharacter)),
+          )],
           source: {
             start_floor: range.start,
             end_floor: range.end,
@@ -332,8 +371,8 @@ function normalizeResult(raw, range) {
   const relation_changes = Array.isArray(value.relation_changes)
     ? value.relation_changes.slice(0, 200).map((item) => ({
       decision: VALID_RELATION_DECISIONS.has(item?.decision) ? item.decision : "review",
-      from: string(item?.from ?? item?.from_id, 200),
-      to: string(item?.to ?? item?.to_id, 200),
+      from: canonicalCharacterName(item?.from ?? item?.from_id, userCharacter),
+      to: canonicalCharacterName(item?.to ?? item?.to_id, userCharacter),
       primary_type: string(item?.primary_type || "未分类", 500),
       tags: strings(item?.tags, 30, 200),
       attitude: string(item?.attitude, 20_000),
@@ -366,6 +405,7 @@ function buildUserContent(payload, state) {
     start: Math.max(0, Number(payload.startFloor ?? 0)),
     end: Math.max(0, Number(payload.endFloor ?? 0)),
   };
+  const userCharacter = string(payload.userCharacter, 200);
   const context = formatMessages(payload.messages);
   if (!context) throw new Error("所选楼层清洗后没有可分析的正文。");
   if (context.length > MAX_CONTEXT_LENGTH) {
@@ -376,7 +416,12 @@ function buildUserContent(payload, state) {
   const priority = [...new Set([
     ...strings(payload.priorityCharacters, 100, 200),
     ...Object.values(profiles).map((profile) => profile.character),
-  ])];
+  ].map((name) => canonicalCharacterName(name, userCharacter)))];
+  const userAliases = [...new Set(Object.values(profiles)
+    .map((profile) => profile.character)
+    .filter((name) =>
+      userCharacter && canonicalCharacterName(name, userCharacter) === userCharacter
+      && normalizedName(name) !== normalizedName(userCharacter)))];
   const relevantLocks = Object.fromEntries(
     Object.entries(state.profileLocks ?? {}).filter(([key]) =>
       key.startsWith(`${String(payload.libraryId).toLocaleLowerCase()}::`)),
@@ -400,6 +445,16 @@ ${JSON.stringify({
 <batch_source>
 ${JSON.stringify({ start_floor: range.start, end_floor: range.end, chat: payload.chatTitle ?? "" })}
 </batch_source>
+
+<speaker_identities>
+${JSON.stringify({
+    user_character: userCharacter,
+    user_aliases_to_canonicalize: ["用户", "USER", "玩家", "你", "主角", ...userAliases],
+    rule: userCharacter
+      ? `所有标记为[用户:${userCharacter}]的发言都属于${userCharacter}，不得另建第二人称人物。`
+      : "用户姓名未提供；不得把第二人称描述句当作人物姓名。",
+  }, null, 2)}
+</speaker_identities>
 
 <priority_characters>
 ${JSON.stringify(priority, null, 2)}
@@ -543,7 +598,7 @@ async function runAnalysis(config, payload, state, onProgress = () => {}) {
     maxTokens: Math.min(config.maxTokens, 8192),
   });
   if (!censusRaw) throw new Error("人物点名请求成功，但没有返回正文。");
-  const registry = normalizeRegistry(censusRaw, built.priority);
+  const registry = normalizeRegistry(censusRaw, built.priority, payload.userCharacter);
   const tracked = registry.characters.filter((item) => item.retention_tier !== "ephemeral");
   if (!tracked.length) throw new Error("人物点名完成，但没有找到需要持续追踪的人物。");
 
@@ -572,7 +627,7 @@ async function runAnalysis(config, payload, state, onProgress = () => {}) {
     });
     if (!raw) throw new Error(`人物分组 ${index + 1} 没有返回正文。`);
     rawStages.profiles.push(raw);
-    let normalized = normalizeResult(raw, built.range);
+    let normalized = normalizeResult(raw, built.range, payload.userCharacter);
     const audited = new Set(normalized.character_audit.map((item) => normalizedName(item.character)));
     const missing = group.filter((item) => !audited.has(normalizedName(item.character)));
     if (missing.length) {
@@ -589,7 +644,10 @@ async function runAnalysis(config, payload, state, onProgress = () => {}) {
       );
       if (repairRaw) {
         rawStages.profiles.push(repairRaw);
-        normalized = mergeAnalysisResults(normalized, normalizeResult(repairRaw, built.range));
+        normalized = mergeAnalysisResults(
+          normalized,
+          normalizeResult(repairRaw, built.range, payload.userCharacter),
+        );
       }
     }
     mergeAnalysisResults(merged, normalized);
@@ -604,7 +662,10 @@ async function runAnalysis(config, payload, state, onProgress = () => {}) {
     );
     if (relationRaw) {
       rawStages.relationships = relationRaw;
-      mergeAnalysisResults(merged, normalizeResult(relationRaw, built.range));
+      mergeAnalysisResults(
+        merged,
+        normalizeResult(relationRaw, built.range, payload.userCharacter),
+      );
     }
   }
   const finalAudited = new Set(merged.character_audit.map((item) => normalizedName(item.character)));
@@ -629,6 +690,7 @@ async function runAnalysis(config, payload, state, onProgress = () => {}) {
 
 module.exports = {
   buildUserContent,
+  canonicalCharacterName,
   normalizeRegistry,
   normalizeOpenAiUrl,
   normalizeResult,
