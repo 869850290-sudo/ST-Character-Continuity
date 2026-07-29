@@ -16,21 +16,68 @@ function containsName(text, name) {
   return normalizedName.length > 0 && normalizedText.includes(normalizedName);
 }
 
-function textTokens(text) {
+function tokenList(text) {
   const normalized = cleanText(text).toLocaleLowerCase();
-  const tokens = new Set(
+  const tokens = (
     normalized
       .split(/[^\p{L}\p{N}]+/gu)
       .map((token) => token.trim())
-      .filter((token) => token.length >= 2),
+      .filter((token) => token.length >= 2)
   );
   const compactHan = normalized.replace(/[^\p{Script=Han}]/gu, "");
   for (let width = 2; width <= 3; width += 1) {
     for (let index = 0; index + width <= compactHan.length; index += 1) {
-      tokens.add(compactHan.slice(index, index + width));
+      tokens.push(compactHan.slice(index, index + width));
     }
   }
   return tokens;
+}
+
+function textTokens(text) {
+  return new Set(tokenList(text));
+}
+
+function tokenCounts(text) {
+  const counts = new Map();
+  for (const token of tokenList(text)) {
+    counts.set(token, (counts.get(token) ?? 0) + 1);
+  }
+  return counts;
+}
+
+function buildSearchModel(documents) {
+  const rows = documents.map((document) => tokenCounts(document));
+  const documentFrequency = new Map();
+  let totalLength = 0;
+  for (const row of rows) {
+    totalLength += row.size;
+    for (const token of row.keys()) {
+      documentFrequency.set(token, (documentFrequency.get(token) ?? 0) + 1);
+    }
+  }
+  return {
+    documentCount: Math.max(1, rows.length),
+    documentFrequency,
+    averageLength: rows.length ? Math.max(1, totalLength / rows.length) : 1,
+  };
+}
+
+function bm25Score(queryTokens, text, model) {
+  if (!queryTokens.size || !model) return 0;
+  const counts = tokenCounts(text);
+  const length = Math.max(1, counts.size);
+  let score = 0;
+  for (const token of queryTokens) {
+    const frequency = counts.get(token) ?? 0;
+    if (!frequency) continue;
+    const df = model.documentFrequency.get(token) ?? 0;
+    const idf = Math.log(1 + (model.documentCount - df + 0.5) / (df + 0.5));
+    const denominator = frequency + 1.2 * (
+      1 - 0.75 + 0.75 * length / model.averageLength
+    );
+    score += idf * (frequency * 2.2) / denominator;
+  }
+  return score;
 }
 
 function overlapScore(queryTokens, text) {
@@ -41,6 +88,11 @@ function overlapScore(queryTokens, text) {
     if (target.has(token)) hits += token.length >= 3 ? 1.4 : 1;
   }
   return hits / Math.sqrt(queryTokens.size * target.size);
+}
+
+function hybridScore(queryTokens, text, searchModel) {
+  return bm25Score(queryTokens, text, searchModel)
+    + overlapScore(queryTokens, text) * 2;
 }
 
 function nearDuplicate(value, selected) {
@@ -102,35 +154,44 @@ function textUnits(value) {
     .filter(Boolean);
 }
 
-function compactText(value, queryTokens, tokenLimit) {
+function truncateTokens(value, tokenLimit) {
+  let output = "";
+  for (const character of cleanText(value)) {
+    if (estimateTokens(output + character) > tokenLimit) break;
+    output += character;
+  }
+  return output.trim();
+}
+
+function compactText(value, queryTokens, tokenLimit, searchModel = null, anchorFirst = false) {
   const units = textUnits(value);
   if (!units.length || tokenLimit <= 0) return "";
+  const anchored = anchorFirst ? truncateTokens(
+    units[0],
+    Math.max(20, Math.min(Math.floor(tokenLimit * 0.45), tokenLimit)),
+  ) : "";
+  const anchoredCost = estimateTokens(anchored);
   const ranked = units.map((unit, index) => ({
     unit,
     index,
-    score: overlapScore(queryTokens, unit) + (index === 0 ? 0.25 : 0),
+    score: hybridScore(queryTokens, unit, searchModel) + (index === 0 ? 0.2 : 0),
   })).sort((a, b) => b.score - a.score || a.index - b.index);
-  const picked = [];
-  let used = 0;
+  const picked = anchored ? [{ unit: anchored, index: 0 }] : [];
+  let used = anchoredCost;
   for (const entry of ranked) {
+    if (anchored && entry.index === 0) continue;
     const cost = estimateTokens(entry.unit);
     if (cost > tokenLimit - used) continue;
     picked.push(entry);
     used += cost;
   }
   if (!picked.length) {
-    const first = units[0];
-    let output = "";
-    for (const character of first) {
-      if (estimateTokens(output + character) > tokenLimit) break;
-      output += character;
-    }
-    return output.trim();
+    return truncateTokens(units[0], tokenLimit);
   }
   return picked.sort((a, b) => a.index - b.index).map((entry) => entry.unit).join("");
 }
 
-function formatProfile(profile, queryTokens, tokenBudget, includeGrowthSynopsis) {
+function formatProfile(profile, queryTokens, tokenBudget, includeGrowthSynopsis, searchModel) {
   const current = profile.current_profile ?? {};
   const header = `### ${cleanText(profile.character)}`;
   const available = Math.max(0, tokenBudget - estimateTokens(header) - 8);
@@ -144,7 +205,13 @@ function formatProfile(profile, queryTokens, tokenBudget, includeGrowthSynopsis)
   const lines = [header];
   const selectedDetails = [];
   for (const [label, value, ratio] of fields) {
-    const compact = compactText(value, queryTokens, Math.max(30, Math.floor(available * ratio)));
+    const compact = compactText(
+      value,
+      queryTokens,
+      Math.max(30, Math.floor(available * ratio)),
+      searchModel,
+      label === "性格" || label === "行动方式",
+    );
     if (compact && !nearDuplicate(compact, selectedDetails)) {
       lines.push(`${label}：${compact}`);
       selectedDetails.push(compact);
@@ -157,16 +224,27 @@ function formatProfile(profile, queryTokens, tokenBudget, includeGrowthSynopsis)
       `制衡：${cleanText(residual.counterweight)}`,
       queryTokens,
       Math.min(160, Math.max(40, tokenBudget - estimateTokens(lines.join("\n")))),
+      searchModel,
     );
     if (compact && !nearDuplicate(compact, selectedDetails)) lines.push(`旧模式：${compact}`);
   }
   return lines.join("\n");
 }
 
-function formatMilestone(item, queryTokens, tokenBudget) {
+function formatMilestone(item, queryTokens, tokenBudget, searchModel) {
   const prefix = `- [${cleanText(item.character)}｜${cleanText(item.title)}]`;
-  const narrative = compactText(item.narrative, queryTokens, Math.floor(tokenBudget * 0.62));
-  const trace = compactText(item.change_trace, queryTokens, Math.floor(tokenBudget * 0.25));
+  const narrative = compactText(
+    item.narrative,
+    queryTokens,
+    Math.floor(tokenBudget * 0.62),
+    searchModel,
+  );
+  const trace = compactText(
+    item.change_trace,
+    queryTokens,
+    Math.floor(tokenBudget * 0.25),
+    searchModel,
+  );
   return [
     prefix,
     item.time ? cleanText(item.time) : "",
@@ -175,13 +253,19 @@ function formatMilestone(item, queryTokens, tokenBudget) {
   ].filter(Boolean).join(" ");
 }
 
-function formatRelation(edge, queryTokens, tokenBudget) {
+function formatRelation(edge, queryTokens, tokenBudget, searchModel) {
   const prefix = `- ${edge.from} → ${edge.to}【${cleanText(edge.primary_type)}】`;
-  const attitude = compactText(edge.attitude, queryTokens, Math.floor(tokenBudget * 0.42));
+  const attitude = compactText(
+    edge.attitude,
+    queryTokens,
+    Math.floor(tokenBudget * 0.42),
+    searchModel,
+  );
   const interaction = compactText(
     edge.interaction_pattern,
     queryTokens,
     Math.floor(tokenBudget * 0.42),
+    searchModel,
   );
   return [
     prefix,
@@ -213,6 +297,7 @@ function takeItems(items, formatter, sectionBudget, perItemMaximum) {
 }
 
 function recall(state, options = {}) {
+  const startedAt = Date.now();
   const libraryId = cleanText(options.libraryId);
   const text = cleanText(options.text);
   const limits = {
@@ -260,6 +345,31 @@ function recall(state, options = {}) {
     .slice(0, limits.profiles);
 
   const queryTokens = textTokens(text);
+  const searchDocuments = [
+    ...Object.values(profileMap).flatMap((profile) => [
+      profile.current_profile?.personality,
+      profile.current_profile?.behavior_pattern,
+      profile.current_profile?.core_need,
+      profile.current_profile?.current_stage,
+      profile.growth_synopsis,
+    ]),
+    ...milestones.map((item) => [
+      item.character,
+      item.title,
+      item.narrative,
+      item.change_trace,
+      ...(item.evidence ?? []),
+    ].join(" ")),
+    ...Object.values(relationMap).map((edge) => [
+      edge.from,
+      edge.to,
+      edge.primary_type,
+      ...(edge.tags ?? []),
+      edge.attitude,
+      edge.interaction_pattern,
+    ].join(" ")),
+  ].map(cleanText).filter(Boolean);
+  const searchModel = buildSearchModel(searchDocuments);
   const growth = milestones
     .map((item) => {
       const searchable = [
@@ -277,7 +387,7 @@ function recall(state, options = {}) {
         .some((name) => detectedSet.has(name)) ? 0.7 : 0;
       return {
         item,
-        score: characterBoost + relatedBoost + overlapScore(queryTokens, searchable),
+        score: characterBoost + relatedBoost + hybridScore(queryTokens, searchable, searchModel),
       };
     })
     .filter((entry) => entry.score > 0)
@@ -296,10 +406,23 @@ function recall(state, options = {}) {
       // a profile of its own. This prevents a hub such as the player persona
       // from pulling every manually recorded relationship into every turn.
       const safeOneHop = oneHop && profileCharacters.has(unseenCharacter);
-      return { edge, score: direct ? 3 : safeOneHop ? 1 : 0 };
+      const searchable = [
+        edge.from,
+        edge.to,
+        edge.primary_type,
+        ...(edge.tags ?? []),
+        edge.attitude,
+        edge.interaction_pattern,
+      ].join(" ");
+      const relevance = hybridScore(queryTokens, searchable, searchModel);
+      return {
+        edge,
+        tier: direct ? 2 : safeOneHop ? 1 : 0,
+        score: relevance,
+      };
     })
-    .filter((entry) => entry.score > 0)
-    .sort((a, b) => b.score - a.score ||
+    .filter((entry) => entry.tier > 0)
+    .sort((a, b) => b.tier - a.tier || b.score - a.score ||
       Number(b.edge.strength ?? 0) - Number(a.edge.strength ?? 0))
     .slice(0, limits.relations);
 
@@ -330,19 +453,20 @@ function recall(state, options = {}) {
       queryTokens,
       budget,
       !growthCharacters.has(profile.character),
+      searchModel,
     ),
     profileBudget,
     profileShare,
   );
   const packedGrowth = takeItems(
     growth,
-    (entry, budget) => formatMilestone(entry.item, queryTokens, budget),
+    (entry, budget) => formatMilestone(entry.item, queryTokens, budget, searchModel),
     growthBudget,
     320,
   );
   const packedRelations = takeItems(
     relations,
-    (entry, budget) => formatRelation(entry.edge, queryTokens, budget),
+    (entry, budget) => formatRelation(entry.edge, queryTokens, budget, searchModel),
     relationBudget,
     220,
   );
@@ -379,8 +503,17 @@ function recall(state, options = {}) {
       safetyReserveTokens: limits.safetyReserve,
       contextSizeExact: options.contextSizeExact === true,
       mode: !injection ? "blocked" : coreOnly ? "core_only" : "layered",
+      retrievalMode: "local_hybrid_bm25",
+      retrievalMs: Math.max(0, Date.now() - startedAt),
+      scannedItems: searchDocuments.length,
     },
   };
 }
 
-module.exports = { estimateTokens, recall, textTokens };
+module.exports = {
+  bm25Score,
+  buildSearchModel,
+  estimateTokens,
+  recall,
+  textTokens,
+};

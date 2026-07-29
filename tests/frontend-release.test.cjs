@@ -6,14 +6,14 @@ const path = require("node:path");
 const root = path.resolve(__dirname, "..");
 const read = (file) => fs.readFileSync(path.join(root, file), "utf8");
 
-test("v0.5.4 frontend release is visibly versioned and cache-busted", () => {
+test("v0.6.0 frontend release is visibly versioned and cache-busted", () => {
   const manifest = JSON.parse(read("manifest.json"));
   const entry = read("index.js");
   const workspace = read("scripts/workspace.js");
 
-  assert.equal(manifest.version, "0.5.4");
+  assert.equal(manifest.version, "0.6.0");
   assert.equal(manifest.auto_update, true);
-  assert.match(entry, /workspace\.js\?v=0\.5\.4/);
+  assert.match(entry, /workspace\.js\?v=0\.6\.0/);
   assert.match(workspace, /ccm-version">v\$\{FRONTEND_VERSION\}/);
 });
 
@@ -75,6 +75,8 @@ test("generation recall uses SillyTavern contextSize and exposes token budgets",
   assert.match(workspace, /人物召回最高预算（tokens）/);
   assert.match(workspace, /生成时精确基数/);
   assert.match(workspace, /预览不估算基础上下文/);
+  assert.match(workspace, /混合相关性召回/);
+  assert.match(workspace, /不调用额外模型/);
 });
 
 test("analysis range persists and preview uses a native top-layer dialog", () => {
