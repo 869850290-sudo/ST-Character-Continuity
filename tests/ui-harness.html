@@ -159,7 +159,7 @@
             hasApiKey: true,
           },
         };
-        if (endpoint === "/health") return { success: true, version: "0.5.3", batches: 2 };
+        if (endpoint === "/health") return { success: true, version: "0.5.4", batches: 2 };
         if (endpoint === "/state/get") return { success: true, state: {} };
         return { success: true };
       },
@@ -174,8 +174,8 @@
             characterCount: 56,
             estimatedTokens: 42,
             tokenBudget: 5000,
-            baseContextTokens: 22000,
-            projectedInputTokens: 22042,
+            baseContextTokens: null,
+            projectedInputTokens: null,
             attentionCeilingTokens: 36000,
             safetyReserveTokens: 4000,
             contextSizeExact: false,
