@@ -2,7 +2,13 @@
 
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const { estimateTokens, recall } = require("../server/recall.cjs");
+const {
+  bm25Score,
+  buildSearchModel,
+  estimateTokens,
+  recall,
+  textTokens,
+} = require("../server/recall.cjs");
 const { materializeProfiles, materializeRelationships } = require("../server/state.cjs");
 
 const LIBRARY_ID = "library-main";
@@ -281,4 +287,41 @@ test("画像字段中的重复描述不会被反复注入", () => {
     baseContextTokens: 22000,
   });
   assert.equal(result.injection.match(/遇到压力时先观察局势/g)?.length, 1);
+});
+
+test("本地 BM25 会优先选择含有本轮稀有线索的资料", () => {
+  const documents = [
+    "傅远平平时维持礼貌并安排日常事务",
+    "傅远平发现暗号账本后立刻封锁书房",
+    "牧知傲在训练场等待新的命令",
+  ];
+  const model = buildSearchModel(documents);
+  const query = textTokens("书房里出现了那本暗号账本");
+  assert.ok(
+    bm25Score(query, documents[1], model) > bm25Score(query, documents[0], model),
+  );
+});
+
+test("混合召回同时保留人物核心基座与本轮相关细节", () => {
+  const memory = state();
+  const personality = [
+    "他始终克制情绪，先观察再行动。",
+    "一旦发现暗号账本，就会封锁书房并单独核对知情者。",
+  ].join("");
+  memory.baseProfiles[`${LIBRARY_ID}::傅远平`].current_profile.personality = personality;
+  memory.batches.a.result.profile_updates[0].proposed_profile.current_profile.personality =
+    personality;
+  const result = recall(memory, {
+    libraryId: LIBRARY_ID,
+    text: "傅远平在书房发现了暗号账本。",
+    baseContextTokens: 30000,
+    attentionCeilingTokens: 36000,
+    recallMaxTokens: 5000,
+    safetyReserveTokens: 4000,
+  });
+  assert.match(result.injection, /始终克制情绪/);
+  assert.match(result.injection, /暗号账本/);
+  assert.equal(result.stats.retrievalMode, "local_hybrid_bm25");
+  assert.ok(result.stats.scannedItems > 0);
+  assert.ok(result.stats.retrievalMs >= 0);
 });

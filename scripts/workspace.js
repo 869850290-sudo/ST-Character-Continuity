@@ -1,6 +1,6 @@
 const GRAPH_WIDTH = 1000;
 const GRAPH_HEIGHT = 660;
-const FRONTEND_VERSION = "0.5.4";
+const FRONTEND_VERSION = "0.6.0";
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -678,6 +678,9 @@ export function initCharacterWorkspace(deps) {
       } · 上限 ${result.stats.attentionCeilingTokens} · ${
         result.stats.contextSizeExact ? "生成时精确基数" : "预览不估算基础上下文"
       }</span></div>
+      <div class="ccm-recall-detected"><b>本地检索</b><span>混合相关性召回 · 扫描 ${
+        Number(result.stats.scannedItems ?? 0)
+      } 个资料片段 · ${Number(result.stats.retrievalMs ?? 0)} ms · 不调用额外模型</span></div>
       <div class="ccm-recall-detected"><b>识别人物</b><span>${escapeHtml(result.detectedCharacters.join("、") || "本轮没有识别到人物")}</span></div>
       <pre class="ccm-injection-preview">${escapeHtml(result.injection || "本轮没有可注入的人物资料。")}</pre>`
       : `<div class="ccm-empty"><i class="fa-solid fa-wand-magic-sparkles"></i><h3>还没有召回记录</h3>
