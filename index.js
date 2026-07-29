@@ -1,8 +1,8 @@
-import { initCharacterWorkspace } from "./scripts/workspace.js?v=0.5.3";
+import { initCharacterWorkspace } from "./scripts/workspace.js?v=0.5.4";
 
 const MODULE_NAME = "character_continuity";
 const API_ROOT = "/api/plugins/character-continuity";
-const FRONTEND_VERSION = "0.5.3";
+const FRONTEND_VERSION = "0.5.4";
 
 const DEFAULT_SETTINGS = Object.freeze({
   enabled: false,
@@ -78,29 +78,6 @@ function messageText(message) {
 
 function isContinuityInjection(message) {
   return message?.extra?.type === "character_continuity_injection";
-}
-
-function estimateTextTokens(value) {
-  const text = String(value ?? "");
-  const han = text.match(/\p{Script=Han}/gu)?.length ?? 0;
-  const kanaHangul = text.match(/[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/gu)?.length ?? 0;
-  const withoutCjk = text.replace(
-    /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/gu,
-    " ",
-  );
-  const words = withoutCjk.match(/[\p{L}\p{N}]+/gu) ?? [];
-  const punctuation = withoutCjk.replace(/[\p{L}\p{N}\s]/gu, "").length;
-  return Math.ceil(
-    han * 1.15
-    + kanaHangul * 1.1
-    + words.reduce((sum, word) => sum + Math.max(1, word.length / 3.5), 0)
-    + punctuation / 3,
-  );
-}
-
-function estimateChatTokens(chat) {
-  return (chat ?? []).reduce((sum, message) =>
-    sum + estimateTextTokens(messageText(message)) + 6, 0);
 }
 
 function currentChatSnapshot() {
@@ -186,9 +163,7 @@ async function runRecall(chat = context().chat, contextSize = null) {
     attentionCeilingTokens: cfg.attentionCeilingTokens,
     recallMaxTokens: cfg.recallMaxTokens,
     safetyReserveTokens: cfg.safetyReserveTokens,
-    baseContextTokens: hasExactContextSize
-      ? exactContextSize
-      : estimateChatTokens(chat),
+    baseContextTokens: hasExactContextSize ? exactContextSize : undefined,
     contextSizeExact: hasExactContextSize,
   });
   lastRecall = response.result;

@@ -1,6 +1,6 @@
 const GRAPH_WIDTH = 1000;
 const GRAPH_HEIGHT = 660;
-const FRONTEND_VERSION = "0.5.3";
+const FRONTEND_VERSION = "0.5.4";
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -670,11 +670,13 @@ export function initCharacterWorkspace(deps) {
         <div><strong>${result.stats.estimatedTokens}</strong><span>估算 tokens</span></div>
       </div>
       <div class="ccm-recall-detected"><b>注意力预算</b><span>${
-        result.stats.baseContextTokens == null ? "基础上下文未知" :
+        result.stats.baseContextTokens == null
+          ? `预览仅计算召回 ${result.stats.estimatedTokens} tokens；正式生成时读取真实基础 tokens`
+          :
           `基础 ${result.stats.baseContextTokens} + 召回 ${result.stats.estimatedTokens}` +
           ` ≈ ${result.stats.projectedInputTokens} tokens`
       } · 上限 ${result.stats.attentionCeilingTokens} · ${
-        result.stats.contextSizeExact ? "生成时精确基数" : "预览估算基数"
+        result.stats.contextSizeExact ? "生成时精确基数" : "预览不估算基础上下文"
       }</span></div>
       <div class="ccm-recall-detected"><b>识别人物</b><span>${escapeHtml(result.detectedCharacters.join("、") || "本轮没有识别到人物")}</span></div>
       <pre class="ccm-injection-preview">${escapeHtml(result.injection || "本轮没有可注入的人物资料。")}</pre>`
